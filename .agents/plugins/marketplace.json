@@ -1,0 +1,12 @@
+{
+  "name": "claude-librarian",
+  "plugins": [
+    {
+      "name": "claude-librarian",
+      "source": {
+        "source": "local",
+        "path": "./"
+      }
+    }
+  ]
+}

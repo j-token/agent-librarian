@@ -26,13 +26,13 @@ Ask with an interactive question tool if one is available; otherwise ask in a no
 4. **Additional paths to exclude**
    - Excluded by default: paths in `.gitignore`, folders starting with a dot, `node_modules`, `dist`, `build`, and similar
 
-## 2. Check dependencies
+## 2. Check Python
 
 ```bash
-python -c "import tree_sitter_language_pack"
+python --version
 ```
 
-If this fails, tell the user to run `pip install -r <plugin>/requirements.txt`. Run it yourself only if the user agrees.
+The plugin needs only Python 3.9 or later; it has no other dependencies. If Python is missing or older, ask the user to install a newer one.
 
 ## 3. Install
 

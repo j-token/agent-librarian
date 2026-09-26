@@ -219,18 +219,21 @@ def _fill_all_roles(project):
         doc.write_text(text, encoding="utf-8")
 
 
-def test_hook_stop_after_folder_move(project):
+def test_hook_stop_after_folder_changes(project):
     init(project)
     _fill_all_roles(project)
     git(project, "add", "-A")
     git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "init")
     assert json.loads(hook("stop", {"cwd": str(project)})) == {}
 
-    shutil.move(str(project / "src/auth"), str(project / "src/identity"))
+    # a deleted folder and a brand-new folder (created without any document)
+    shutil.rmtree(project / "src/api")
+    (project / "src/billing").mkdir()
+    (project / "src/billing/pay.py").write_text("def pay(): pass\n", encoding="utf-8")
     out = json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": False}))
-    assert out["decision"] == "block" and "src" in out["reason"]
+    assert out["decision"] == "block" and "src/billing" in out["reason"]
     table = (project / "src/CLAUDE.md").read_text(encoding="utf-8")
-    assert "| auth/ |" not in table and f"| identity/ | {EN["placeholder"]} |" in table
+    assert "| api/ |" not in table and f"| billing/ | {EN['placeholder']} |" in table
 
     again = json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": True}))
     assert "decision" not in again
@@ -336,3 +339,183 @@ def test_unknown_language_uses_english_headings(project):
     init(project)
     out = json.loads(hook("stop", {"cwd": str(project)}))
     assert out["decision"] == "block" and "(ja)" in out["reason"]
+
+
+# ---------------------------------------------------------------- QA round 3 regressions (sync)
+
+
+def _role_doc(project, rel):
+    return (project / rel / "CLAUDE.md")
+
+
+def test_unmatched_or_fenced_marker_keeps_human_text(project):
+    init(project)
+    doc = _role_doc(project, "src/auth")
+    text = doc.read_text(encoding="utf-8")
+    fenced = ("Example of the generated block:\n\n```markdown\n" + lb.INDEX_START
+              + "\n| File | Function | Line |\n```\n")
+    text = text.replace(EN["placeholder"], fenced)
+    doc.write_text(text, encoding="utf-8")
+    run(project, "index", str(project / "src/auth"))
+    out = doc.read_text(encoding="utf-8")
+    assert fenced in out
+    assert ("auth.py", "login", "9") in index_rows(doc)
+
+    # a start marker without an end marker is treated as text, not as the index
+    broken = out.replace(lb.INDEX_END, "") + "\n## Notes\n\nkeep me\n"
+    doc.write_text(broken, encoding="utf-8")
+    run(project, "index", str(project / "src/auth"))
+    assert "keep me" in doc.read_text(encoding="utf-8")
+
+
+def test_heading_inside_code_fence_is_not_a_section(project):
+    init(project)
+    doc = _role_doc(project, "src")
+    role = "Build notes:\n\n```bash\n# install deps first\nnpm ci\n```"
+    doc.write_text(doc.read_text(encoding="utf-8").replace(EN["placeholder"], role, 1), encoding="utf-8")
+    run(project, "index", str(project / "src"))
+    out = doc.read_text(encoding="utf-8")
+    assert role in out
+    assert out.index(role) < out.index(EN["subdirs"])
+
+
+def test_text_under_subfolder_table_is_kept(project):
+    init(project)
+    doc = _role_doc(project, "src")
+    text = doc.read_text(encoding="utf-8")
+    table_end = text.index("| auth/ |")
+    line_end = text.index("\n", table_end)
+    text = text[:line_end + 1] + "\nNote: api/ is being split.\n" + text[line_end + 1:]
+    doc.write_text(text, encoding="utf-8")
+    run(project, "index", str(project / "src"))
+    assert "Note: api/ is being split." in doc.read_text(encoding="utf-8")
+
+
+def test_reinit_keeps_doc_mode(project):
+    init(project, doc="both")
+    run(project, "init", "--language", "ko")
+    cfg = json.loads((project / ".librarian/config.json").read_text(encoding="utf-8"))
+    assert cfg["docName"] == "both" and cfg["language"] == "ko"
+
+
+def test_switching_to_both_moves_roles(project):
+    init(project)
+    doc = _role_doc(project, "src")
+    doc.write_text(doc.read_text(encoding="utf-8").replace(EN["placeholder"], "Source code.", 1),
+                   encoding="utf-8")
+    run(project, "init", "--doc", "both")
+    run(project, "index", "--all")
+    assert "Source code." in (project / "src/AGENTS.md").read_text(encoding="utf-8")
+    assert (project / "src/CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+
+
+def test_post_edit_updates_parent_of_topmost_new_folder(project):
+    init(project)
+    new = project / "x/y z/한/q.py"
+    new.parent.mkdir(parents=True)
+    new.write_text("def q(): pass\n", encoding="utf-8")
+    hook("post-edit", {"cwd": str(project), "tool_input": {"file_path": str(new)}})
+    assert "| x/ |" in (project / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "| y z/ |" in (project / "x/CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_renamed_folder_keeps_role_cell(project):
+    init(project)
+    _fill_all_roles(project)
+    git(project, "add", "-A")
+    git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "init")
+    doc = project / "src/CLAUDE.md"
+    doc.write_text(doc.read_text(encoding="utf-8").replace("| auth/ | role |", "| auth/ | Login |"),
+                   encoding="utf-8")
+    shutil.move(str(project / "src/auth"), str(project / "src/identity"))
+    out = json.loads(hook("stop", {"cwd": str(project)}))
+    assert "| identity/ | Login |" in doc.read_text(encoding="utf-8")
+    assert "decision" not in out
+
+
+def test_config_with_bom(project):
+    init(project)
+    cfg = project / ".librarian/config.json"
+    cfg.write_bytes(b"\xef\xbb\xbf" + cfg.read_bytes())
+    run(project, "index", "--all")
+    src = project / "src/auth/auth.py"
+    src.write_text("\n" + src.read_text(encoding="utf-8"), encoding="utf-8")
+    hook("post-edit", {"cwd": str(project), "tool_input": {"file_path": str(src)}})
+    assert ("auth.py", "Session", "4") in index_rows(project / "src/auth/CLAUDE.md")
+
+
+def test_stop_hook_active_string_false(project):
+    init(project)
+    out = json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": "false"}))
+    assert out.get("decision") == "block"
+
+
+def test_parse_failure_keeps_previous_rows(project):
+    init(project)
+    (project / "src/auth/auth.py").write_text("def broken(:\n", encoding="utf-8")
+    run(project, "index", str(project / "src/auth"))
+    assert ("auth.py", "login", "9") in index_rows(project / "src/auth/CLAUDE.md")
+
+
+def test_invalid_config_numbers_fall_back(project):
+    init(project)
+    cfg_path = project / ".librarian/config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["maxDepth"] = "deep"
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    run(project, "index", "--all")  # must not raise
+
+
+def test_many_files_is_fast(tmp_path):
+    import time
+    for d in range(200):
+        for f in range(15):
+            p = tmp_path / f"pkg{d % 20}" / f"mod{d}" / f"f{f}.py"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("def f(): pass\n", encoding="utf-8")
+    git(tmp_path, "init", "-q")
+    run(tmp_path, "init", "--doc", "CLAUDE.md")
+    start = time.perf_counter()
+    run(tmp_path, "index", "--all")
+    run(tmp_path, "pending")
+    assert time.perf_counter() - start < 15
+
+
+def test_unclosed_fence_is_idempotent(project):
+    init(project)
+    doc = project / "src/CLAUDE.md"
+    doc.write_text(f"# Parent: ../CLAUDE.md\n\n{EN['role']}\n\nRole:\n\n```\ncode\n", encoding="utf-8")
+    run(project, "index", str(project / "src"))
+    first = doc.read_text(encoding="utf-8")
+    run(project, "index", str(project / "src"))
+    run(project, "index", str(project / "src"))
+    assert doc.read_text(encoding="utf-8") == first
+    assert first.count(EN["subdirs"]) == 1
+
+
+def test_orphan_start_marker_never_loses_text(project):
+    init(project)
+    doc = project / "src/auth/CLAUDE.md"
+    text = doc.read_text(encoding="utf-8").replace(lb.INDEX_END, "") + "\n## Notes\n\nImportant human notes\n"
+    doc.write_text(text, encoding="utf-8")
+    for _ in range(3):
+        run(project, "index", str(project / "src/auth"))
+    out = doc.read_text(encoding="utf-8")
+    assert "Important human notes" in out
+    assert out.count(lb.INDEX_START) == 1 and out.count(lb.INDEX_END) == 1
+
+
+def test_parse_failure_without_previous_rows_lists_file(project):
+    init(project)
+    (project / "src/auth/new.py").write_text("def broken(:\n", encoding="utf-8")
+    run(project, "index", str(project / "src/auth"))
+    assert ("new.py", "-", "-") in index_rows(project / "src/auth/CLAUDE.md")
+
+
+def test_negative_limits_fall_back(project):
+    init(project)
+    cfg_path = project / ".librarian/config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["maxEntries"] = -5
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    assert lb.load_library(project).config["maxEntries"] == lb.DEFAULT_CONFIG["maxEntries"]

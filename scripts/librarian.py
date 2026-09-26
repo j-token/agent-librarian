@@ -15,8 +15,12 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # hooks load this file via runpy
+from extract import EXT_LANG, extract_symbols  # noqa: E402
 
 CONFIG_DIR = ".librarian"
 CONFIG_FILE = "config.json"
@@ -76,174 +80,6 @@ DEFAULT_CONFIG = {
     "maxDepth": 6,
 }
 
-# ---------------------------------------------------------------- parsing rules
-
-EXT_LANG = {
-    ".py": "python",
-    ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "javascript",
-    ".ts": "typescript", ".mts": "typescript", ".cts": "typescript",
-    ".tsx": "tsx",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c", ".h": "c",
-    ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
-    ".cs": "csharp",
-}
-
-_JS_CONTAINERS = {"class_declaration", "abstract_class_declaration", "class"}
-_JS_FUNCS = {"function_declaration", "generator_function_declaration", "method_definition"}
-_JS_LEAVES = {"interface_declaration", "enum_declaration"}
-
-# containers: recorded as a row, then members are visited (the name becomes a scope prefix)
-# funcs: recorded as a row; the body is not visited
-# leaves: recorded as a row only
-LANG_RULES = {
-    "python": {
-        "containers": {"class_definition"},
-        "funcs": {"function_definition"},
-        "leaves": set(),
-    },
-    "javascript": {"containers": _JS_CONTAINERS, "funcs": _JS_FUNCS, "leaves": set()},
-    "typescript": {"containers": _JS_CONTAINERS, "funcs": _JS_FUNCS, "leaves": _JS_LEAVES},
-    "tsx": {"containers": _JS_CONTAINERS, "funcs": _JS_FUNCS, "leaves": _JS_LEAVES},
-    "go": {
-        "containers": set(),
-        "funcs": {"function_declaration", "method_declaration"},
-        "leaves": {"type_spec"},
-    },
-    "rust": {
-        "containers": {"impl_item", "trait_item", "mod_item"},
-        "funcs": {"function_item", "function_signature_item"},
-        "leaves": {"struct_item", "enum_item"},
-    },
-    "java": {
-        "containers": {"class_declaration", "interface_declaration", "enum_declaration",
-                       "record_declaration"},
-        "funcs": {"method_declaration", "constructor_declaration"},
-        "leaves": set(),
-    },
-    "c": {"containers": set(), "funcs": {"function_definition"}, "leaves": set()},
-    "cpp": {
-        "containers": {"class_specifier", "struct_specifier"},
-        "funcs": {"function_definition"},
-        "leaves": set(),
-    },
-    "csharp": {
-        "containers": {"class_declaration", "struct_declaration", "interface_declaration",
-                       "record_declaration"},
-        "funcs": {"method_declaration", "constructor_declaration"},
-        "leaves": {"enum_declaration"},
-    },
-}
-_JS_FUNC_VALUES = {"arrow_function", "function_expression", "function", "generator_function"}
-_C_DECLARATOR_WRAPPERS = {"pointer_declarator", "reference_declarator", "function_declarator",
-                          "parenthesized_declarator"}
-
-
-class ParserUnavailable(RuntimeError):
-    pass
-
-
-_parser_cache: dict = {}
-
-
-def _get_parser(lang: str):
-    if lang not in _parser_cache:
-        try:
-            import tree_sitter_language_pack as tslp
-        except ImportError as exc:
-            raise ParserUnavailable(
-                "tree-sitter-language-pack is not installed: "
-                "pip install tree-sitter-language-pack") from exc
-        _parser_cache[lang] = tslp.get_parser(lang)
-    return _parser_cache[lang]
-
-
-def _text(node, src: bytes) -> str:
-    return src[node.start_byte():node.end_byte()].decode("utf-8", "replace")
-
-
-def _children(node):
-    return [node.child(i) for i in range(node.child_count())]
-
-
-def _node_name(node, lang: str, src: bytes) -> str | None:
-    kind = node.kind()
-    if lang in ("c", "cpp") and kind == "function_definition":
-        decl = node.child_by_field_name("declarator")
-        while decl is not None and decl.kind() in _C_DECLARATOR_WRAPPERS:
-            decl = decl.child_by_field_name("declarator")
-        return _text(decl, src) if decl is not None else None
-    if lang == "rust" and kind == "impl_item":
-        typ = node.child_by_field_name("type")
-        trait = node.child_by_field_name("trait")
-        if typ is None:
-            return None
-        return f"{_text(typ, src)}<{_text(trait, src)}>" if trait is not None else _text(typ, src)
-    if lang == "go" and kind == "method_declaration":
-        name = node.child_by_field_name("name")
-        recv = node.child_by_field_name("receiver")
-        recv_type = None
-        if recv is not None:
-            stack = [recv]
-            while stack:
-                cur = stack.pop()
-                if cur.kind() == "type_identifier":
-                    recv_type = _text(cur, src)
-                    break
-                stack.extend(reversed(_children(cur)))
-        if name is None:
-            return None
-        return f"{recv_type}.{_text(name, src)}" if recv_type else _text(name, src)
-    name = node.child_by_field_name("name")
-    return _text(name, src) if name is not None else None
-
-
-def extract_symbols(path: Path) -> list[tuple[str, int]]:
-    """Extract (name, line) pairs from a file. Lines are 1-based."""
-    lang = EXT_LANG.get(path.suffix.lower())
-    if lang is None:
-        return []
-    src_text = path.read_text(encoding="utf-8", errors="replace")
-    src = src_text.encode("utf-8")
-    tree = _get_parser(lang).parse(src_text)
-    rules = LANG_RULES[lang]
-    out: list[tuple[str, int]] = []
-
-    def emit(name: str, node, scope: list[str]) -> None:
-        out.append((".".join(scope + [name]), node.start_position().row + 1))
-
-    def visit(node, scope: list[str]) -> None:
-        kind = node.kind()
-        if kind in rules["containers"]:
-            name = _node_name(node, lang, src)
-            if name:
-                emit(name, node, scope)
-                scope = scope + [name]
-            for child in _children(node):
-                visit(child, scope)
-            return
-        if kind in rules["funcs"] or kind in rules["leaves"]:
-            name = _node_name(node, lang, src)
-            if name:
-                emit(name, node, scope)
-            return
-        if lang in ("javascript", "typescript", "tsx") and kind == "variable_declarator":
-            value = node.child_by_field_name("value")
-            name = node.child_by_field_name("name")
-            if value is not None and name is not None and value.kind() in _JS_FUNC_VALUES:
-                emit(_text(name, src), node, scope)
-            return
-        if kind in _JS_FUNC_VALUES:
-            return
-        for child in _children(node):
-            visit(child, scope)
-
-    visit(tree.root_node(), [])
-    return out
-
-
 # ---------------------------------------------------------------- config / paths
 
 
@@ -295,9 +131,21 @@ def load_library(start: Path) -> Library | None:
     root = find_root(start)
     if root is None:
         return None
+    return Library(root=root, config=_read_config(root / CONFIG_DIR / CONFIG_FILE))
+
+
+def _read_config(path: Path) -> dict:
     cfg = dict(DEFAULT_CONFIG)
-    cfg.update(json.loads((root / CONFIG_DIR / CONFIG_FILE).read_text(encoding="utf-8")))
-    return Library(root=root, config=cfg)
+    if path.is_file():
+        cfg.update(json.loads(path.read_text(encoding="utf-8-sig")))  # tolerate a BOM
+    for key in ("maxEntries", "maxDepth"):
+        try:
+            cfg[key] = int(cfg[key])
+        except (TypeError, ValueError):
+            cfg[key] = DEFAULT_CONFIG[key]
+        if cfg[key] < 1:
+            cfg[key] = DEFAULT_CONFIG[key]
+    return cfg
 
 
 def _is_excluded(lib: Library, rel_parts: tuple[str, ...]) -> bool:
@@ -367,39 +215,81 @@ def _escape(cell: str) -> str:
 # ---------------------------------------------------------------- documents
 
 
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
 def _split_sections(text: str) -> dict:
-    """Split a document into head / role / subdirs / index / tail."""
+    """Split a document into head / role / subdirs / index / tail.
+
+    Lines inside code fences are plain text: they never start a section, and an index
+    marker counts only when a matching end marker follows it.
+    """
     lines = text.splitlines()
+    fenced = _fenced_lines(lines)
     sections = {"head": [], "role": None, "subdirs": None, "index": None, "tail": []}
     cur = "head"
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
-        if stripped == INDEX_START:
-            j = i
+        if i in fenced:
+            sections[cur].append(line)
+            i += 1
+            continue
+        if stripped == INDEX_START and sections["index"] is None:
+            j = i + 1
             while j < len(lines) and lines[j].strip() != INDEX_END:
                 j += 1
-            sections["index"] = lines[i:j + 1]
-            cur = "tail"
-            i = j + 1
+            if j < len(lines):
+                sections["index"] = lines[i:j + 1]
+                cur = "tail"
+                i = j + 1
+                continue
+        if stripped in (INDEX_START, INDEX_END):
+            i += 1  # an orphan generated marker: drop it so it cannot pair up later
             continue
-        if stripped in ROLE_HEADINGS:
+        if stripped in ROLE_HEADINGS and sections["role"] is None:
             sections["role"] = []
             cur = "role"
-        elif stripped in SUBDIR_HEADINGS:
+        elif stripped in SUBDIR_HEADINGS and sections["subdirs"] is None:
             sections["subdirs"] = []
             cur = "subdirs"
         elif stripped.startswith("## ") or stripped.startswith("# "):
             if cur in ("role", "subdirs"):
                 cur = "tail"
             sections[cur].append(line)
-            i += 1
-            continue
         else:
             sections[cur].append(line)
         i += 1
     return sections
+
+
+def _fenced_lines(lines: list[str]) -> set[int]:
+    """Indexes of lines inside (or delimiting) closed code fences. An unclosed fence is text."""
+    fenced: set[int] = set()
+    open_at, fence = None, None
+    for k, line in enumerate(lines):
+        m = _FENCE.match(line)
+        if fence is None:
+            if m:
+                open_at, fence = k, m.group(1)
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+            fenced.update(range(open_at, k + 1))
+            fence = None
+    return fenced
+
+
+def _parse_index_rows(lines: list[str] | None) -> dict[str, list[tuple[str, str, str]]]:
+    """Previous index rows by file name (kept when a file fails to parse)."""
+    rows: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    for line in lines or []:
+        s_ = line.strip()
+        if not s_.startswith("|") or set(s_) <= set("|-: "):
+            continue
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", s_)[1:-1]]
+        if len(cells) == 3 and cells[2] not in {h["index_header"][2] for h in DOC_STRINGS.values()}:
+            rows[cells[0]].append((cells[0], cells[1], cells[2]))
+    return rows
 
 
 def _role_is_empty(role_lines: list[str] | None) -> bool:
@@ -425,7 +315,8 @@ def _parse_subdir_rows(lines: list[str]) -> list[tuple[str, str]]:
 
 
 def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, str]],
-               index_rows: list[tuple[str, str, str]], head: list[str], tail: list[str]) -> str:
+               index_rows: list[tuple[str, str, str]], head: list[str], tail: list[str],
+               subdir_notes: str = "") -> str:
     s = lib.strings
     placeholder = s["placeholder"]
     role_text = "\n".join(role).strip()
@@ -434,11 +325,16 @@ def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, 
     parts: list[str] = []
     parts.append("\n".join(head).rstrip())
     parts.append(s["role"] + "\n\n" + (role_text or placeholder))
-    if subdirs:
-        table = ["| {} | {} |".format(*s["subdir_header"]), "|---|---|"]
-        table += [f"| {_escape(n)}/ | {placeholder if r in PLACEHOLDERS or not r else r} |"
-                  for n, r in subdirs]
-        parts.append(s["subdirs"] + "\n\n" + "\n".join(table))
+    if subdirs or subdir_notes:
+        section = s["subdirs"]
+        if subdirs:
+            table = ["| {} | {} |".format(*s["subdir_header"]), "|---|---|"]
+            table += [f"| {_escape(n)}/ | {placeholder if r in PLACEHOLDERS or not r else r} |"
+                      for n, r in subdirs]
+            section += "\n\n" + "\n".join(table)
+        if subdir_notes:
+            section += "\n\n" + subdir_notes  # text a human wrote under the table
+        parts.append(section)
     extra = "\n".join(tail).strip()
     if extra:
         parts.append(extra)
@@ -487,17 +383,17 @@ class Report:
             getattr(self, k).extend(getattr(other, k))
 
 
-def build_index_rows(lib: Library, d: Path, files: list[Path], report: Report):
+def build_index_rows(lib: Library, d: Path, files: list[Path], report: Report,
+                     previous: dict | None = None):
     rows = []
-    for f in sorted((f for f in files if f.parent == d), key=lambda p: p.name.lower()):
+    for f in sorted(files, key=lambda p: p.name.lower()):
         if f.name in lib.doc_names or f.suffix.lower() not in EXT_LANG:
             continue
         try:
             symbols = extract_symbols(f)
-        except ParserUnavailable:
-            raise
-        except Exception as exc:  # a parse failure skips only that file
-            report.warnings.append(f"{lib.rel(f)}: parse failed ({exc})")
+        except Exception as exc:  # keep the previous rows of a file that fails to parse
+            report.warnings.append(f"{lib.rel(f)}: parse failed, keeping previous index rows ({exc})")
+            rows.extend((previous or {}).get(f.name) or [(f.name, "-", "-")])
             continue
         if not symbols:
             rows.append((f.name, "-", "-"))
@@ -505,23 +401,62 @@ def build_index_rows(lib: Library, d: Path, files: list[Path], report: Report):
     return rows
 
 
-def sync_dir(lib: Library, d: Path, files: list[Path], dirs: set[Path], fix: bool) -> Report:
-    """Bring one folder's document in line with the tree. With fix=False, only report."""
+ALIAS = "@AGENTS.md"
+
+
+def _is_librarian_doc(text: str) -> bool:
+    return INDEX_START in text or any(h in text for h in ROLE_HEADINGS | SUBDIR_HEADINGS)
+
+
+def _read(path: Path) -> str | None:
+    return path.read_text(encoding="utf-8-sig") if path.is_file() else None
+
+
+def migrate_doc(lib: Library, d: Path) -> None:
+    """Move a folder document when the doc mode changes (CLAUDE.md <-> AGENTS.md / both)."""
+    claude, agents = d / "CLAUDE.md", d / "AGENTS.md"
+    c, a = _read(claude), _read(agents)
+    if lib.primary_doc == "AGENTS.md":
+        if a is None and c is not None and c.strip() != ALIAS and _is_librarian_doc(c):
+            claude.replace(agents)
+    elif a is not None and _is_librarian_doc(a) and (c is None or c.strip() == ALIAS):
+        agents.replace(claude)
+
+
+def sync_dir(lib: Library, d: Path, files: list[Path], children: list[Path], fix: bool,
+             had_doc: set[Path] | None = None) -> Report:
+    """Bring one folder's document in line with the tree. With fix=False, only report.
+
+    files: the files directly in d. children: the managed subfolders of d.
+    had_doc: folders that had a document before this run (used to follow renames).
+    """
     report = Report()
     rel = lib.rel(d)
+    if fix:
+        migrate_doc(lib, d)
     doc = lib.doc_path(d)
-    existed = doc.is_file()
-    original = doc.read_text(encoding="utf-8") if existed else ""
+    original = _read(doc)
+    existed = original is not None
+    original = original or ""
     sec = _split_sections(original) if existed else {
         "head": [], "role": None, "subdirs": None, "index": None, "tail": []}
     sec["head"] = normalize_head(lib, d, sec["head"])
 
-    child_dirs = sorted((c for c in dirs if c.parent == d), key=lambda p: p.name.lower())
-    known = dict(_parse_subdir_rows(sec["subdirs"] or []))
+    child_dirs = sorted(children, key=lambda p: p.name.lower())
+    rows = _parse_subdir_rows(sec["subdirs"] or [])
+    known = dict(rows)
     subdirs = [(c.name, known.get(c.name, "")) for c in child_dirs]
-    index_rows = build_index_rows(lib, d, files, report)
+    # a renamed folder (one row gone, one folder new that brought its document along)
+    removed = [n for n, _ in rows if n not in {c.name for c in child_dirs}]
+    added = [i for i, (n, r) in enumerate(subdirs) if n not in known]
+    if (len(removed) == 1 and len(added) == 1 and had_doc is not None
+            and child_dirs[added[0]] in had_doc and known[removed[0]] not in PLACEHOLDERS):
+        subdirs[added[0]] = (subdirs[added[0]][0], known[removed[0]])
+    notes = "\n".join(l for l in (sec["subdirs"] or []) if not l.strip().startswith("|")).strip()
+    index_rows = build_index_rows(lib, d, files, report, _parse_index_rows(sec["index"]))
 
-    rendered = render_doc(lib, d, sec["role"] or [], subdirs, index_rows, sec["head"], sec["tail"])
+    rendered = render_doc(lib, d, sec["role"] or [], subdirs, index_rows, sec["head"], sec["tail"],
+                          notes)
     if rendered != original:
         if not existed:
             (report.created if fix else report.drift).append(rel)
@@ -532,24 +467,37 @@ def sync_dir(lib: Library, d: Path, files: list[Path], dirs: set[Path], fix: boo
     if fix and lib.doc_mode == "both":
         alias = d / "CLAUDE.md"
         if not alias.is_file():
-            alias.write_text("@AGENTS.md\n", encoding="utf-8", newline="\n")
+            alias.write_text(ALIAS + "\n", encoding="utf-8", newline="\n")
 
     if _role_is_empty(sec["role"]) or any(not r or r in PLACEHOLDERS for _, r in subdirs):
         report.pending.append(rel)
     depth = 0 if d == lib.root else len(d.relative_to(lib.root).parts)
-    if depth > int(lib.config["maxDepth"]):
+    if depth > lib.config["maxDepth"]:
         report.warnings.append(
             f"{rel}: folder depth {depth} > {lib.config['maxDepth']} (consider restructuring)")
-    if len(index_rows) > int(lib.config["maxEntries"]):
+    if len(index_rows) > lib.config["maxEntries"]:
         report.warnings.append(
             f"{rel}: {len(index_rows)} index rows > {lib.config['maxEntries']} "
             "(consider splitting into subfolders)")
     return report
 
 
+def _tree_maps(lib: Library, files: list[Path], dirs: set[Path]):
+    by_dir: dict[Path, list[Path]] = defaultdict(list)
+    for f in files:
+        by_dir[f.parent].append(f)
+    children: dict[Path, list[Path]] = defaultdict(list)
+    for d in dirs:
+        if d != lib.root:
+            children[d.parent].append(d)
+    return by_dir, children
+
+
 def sync_dirs(lib: Library, targets: set[Path] | None, fix: bool) -> Report:
     files = list_files(lib)
     dirs = managed_dirs(lib, files)
+    by_dir, children = _tree_maps(lib, files, dirs)
+    had_doc = {d for d in dirs if lib.doc_path(d).is_file()}
     report = Report()
     if targets is None:
         todo = dirs
@@ -565,14 +513,17 @@ def sync_dirs(lib: Library, targets: set[Path] | None, fix: bool) -> Report:
             todo.add(cur)
             if cur != lib.root:
                 todo.add(cur.parent)
-            # for a new folder, also create documents for ancestors that lack one
+            # for new folders, also create documents for ancestors that lack one,
+            # and update the parent of the topmost new folder
             for anc in cur.parents:
-                if anc in dirs and not lib.doc_path(anc).is_file():
+                if anc in dirs and anc not in had_doc:
                     todo.add(anc)
+                    if anc != lib.root:
+                        todo.add(anc.parent)
                 if anc == lib.root:
                     break
     for d in sorted(todo, key=lambda p: len(p.parts), reverse=True):
-        report.merge(sync_dir(lib, d, files, dirs, fix))
+        report.merge(sync_dir(lib, d, by_dir.get(d, []), children.get(d, []), fix, had_doc))
     return report
 
 
@@ -770,7 +721,9 @@ def hook_stop(payload: dict) -> None:
     out: dict = {}
     if report.warnings:
         out["systemMessage"] = "librarian: " + "; ".join(report.warnings)
-    if report.pending and not payload.get("stop_hook_active"):
+    active = payload.get("stop_hook_active")
+    active = active is True or str(active).strip().lower() == "true"
+    if report.pending and not active:
         out["decision"] = "block"
         out["reason"] = (
             f"librarian: these folder documents have an empty '{lib.strings['role']}' section "
@@ -801,10 +754,9 @@ def _print_report(report: Report) -> None:
 def cmd_init(args) -> None:
     root = Path(args.root).resolve()
     cfg_path = root / CONFIG_DIR / CONFIG_FILE
-    cfg = dict(DEFAULT_CONFIG)
-    if cfg_path.is_file():
-        cfg.update(json.loads(cfg_path.read_text(encoding="utf-8")))
-    cfg["docName"] = args.doc
+    cfg = _read_config(cfg_path)
+    if args.doc:
+        cfg["docName"] = args.doc
     if args.language:
         cfg["language"] = args.language
     if args.targets is not None:
@@ -828,10 +780,11 @@ def cmd_scaffold(args) -> None:
     lib = _require(Path(args.root))
     files = list_files(lib)
     dirs = managed_dirs(lib, files)
+    by_dir, children = _tree_maps(lib, files, dirs)
     report = Report()
     for d in sorted(dirs, key=lambda p: len(p.parts), reverse=True):
         if not lib.doc_path(d).is_file():
-            report.merge(sync_dir(lib, d, files, dirs, fix=True))
+            report.merge(sync_dir(lib, d, by_dir.get(d, []), children.get(d, []), fix=True))
     _print_report(Report(created=report.created, warnings=report.warnings))
 
 
@@ -873,10 +826,6 @@ def cmd_hook(args) -> None:
             hook_post_edit(payload)
         else:
             hook_stop(payload)
-    except ParserUnavailable as exc:
-        print(f"librarian: {exc}", file=sys.stderr)
-        if args.event == "stop":
-            _emit({})
     except Exception as exc:  # hooks never block the editing flow
         print(f"librarian hook error: {exc!r}", file=sys.stderr)
         if args.event == "stop":
@@ -892,7 +841,8 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("init")
     p.add_argument("--language", help="library language, e.g. en, ko (default: en)")
-    p.add_argument("--doc", choices=["CLAUDE.md", "AGENTS.md", "both"], default="CLAUDE.md")
+    p.add_argument("--doc", choices=["CLAUDE.md", "AGENTS.md", "both"],
+                   help="folder document name (default: keep the current one, else CLAUDE.md)")
     p.add_argument("--targets", help="comma-separated: claude,agents,codex")
     p.add_argument("--exclude", nargs="*", default=[])
     p.set_defaults(func=cmd_init)
@@ -917,10 +867,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(func=cmd_hook)
 
     args = parser.parse_args(argv)
-    try:
-        args.func(args)
-    except ParserUnavailable as exc:
-        sys.exit(str(exc))
+    args.func(args)
 
 
 if __name__ == "__main__":

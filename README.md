@@ -41,7 +41,7 @@ Holds the billing and invoicing code.              ← written by an agent or a 
 The first thing the install commands ask is the **library language**: the language the folder documents are written in. English and Korean have built-in headings. Any other language is accepted too; the headings then stay in English and the roles are written in that language. You can change the language later by running `/rebuild-library` again. Roles that are already written are kept.
 
 - The root document describes only the role of each top-level folder. Each folder document describes only the folders directly beneath it.
-- A tree-sitter script generates the file, function, and line entries. **The documents never describe what a function does.** This prevents hallucination, where an AI misreads a function and writes down a wrong description of it.
+- A script generates the file, function, and line entries. **The documents never describe what a function does.** This prevents hallucination, where an AI misreads a function and writes down a wrong description of it.
 - When a file is edited, a hook updates the line numbers right away. At the end of every turn, a check hook fixes any mismatch between the documents and the code, and asks the agent to fill in any folder whose role is still empty.
 - The reasoning behind the design is written up in the [knowledge management research notes](docs/research/knowledge-management.md) (in Korean).
 
@@ -59,9 +59,7 @@ The links are directory junctions on Windows and symbolic links on other operati
 
 ## Requirements
 
-- Python 3.9 or later
-- `pip install -r requirements.txt` (`tree-sitter-language-pack`)
-  - Each language's parser is downloaded the first time it is used.
+- Python 3.9 or later. Nothing else to install: the index is built with the Python standard library only.
 - Supported languages: Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#
 
 This plugin follows the [Agent Plugins](https://agent-plugins.org/) specification (a `plugin.json` at the root), so it works in both Claude Code and Codex.
@@ -74,9 +72,34 @@ This plugin follows the [Agent Plugins](https://agent-plugins.org/) specificatio
 
 ## Instructions for humans
 
-First install this plugin, then run the `/reload-plugins` command.
+### Install
 
-Your "library" will then be built for you.
+You only need Python 3.9 or later.
+
+**Claude Code**: run these inside Claude Code, then run `/reload-plugins`.
+
+```
+/plugin marketplace add j-token/claude-librarian
+/plugin install claude-librarian@claude-librarian
+```
+
+You can also do the same from a terminal:
+
+```bash
+claude plugin marketplace add j-token/claude-librarian
+claude plugin install claude-librarian@claude-librarian
+```
+
+**Codex**: run these in a terminal.
+
+```bash
+codex plugin marketplace add j-token/claude-librarian
+codex plugin add claude-librarian@claude-librarian
+```
+
+Then turn on `[features] hooks = true` in `~/.codex/config.toml`, start Codex, and trust this plugin's hooks in `/hooks`.
+
+Once the plugin is installed, build your "library" with one of the commands below.
 
 ### If you have an existing codebase
 
@@ -99,3 +122,28 @@ Your "library" will then be built for you.
 2. Answer the questions it asks, starting with the library language.
 
 3. Check that the knowledge management rules added to CLAUDE.md or AGENTS.md look right to you.
+
+## Instructions for agents
+
+This section is for AI agents asked to install or use this plugin for a user.
+
+### Installing for a user
+
+1. Check that `python --version` reports 3.9 or later. If Python is missing, ask the user to install it; the plugin has no other dependencies.
+2. Install the plugin with the terminal commands from "Install" above: the `claude plugin …` commands for Claude Code, or the `codex plugin …` commands for Codex.
+3. Some steps need the user and you cannot do them yourself. Ask the user to:
+   - run `/reload-plugins` in Claude Code;
+   - in Codex, set `[features] hooks = true` and trust this plugin's hooks in `/hooks`;
+   - run `/rebuild-library` (existing codebase) or `/build-library` (new project). These skills cannot be invoked by a model, and they ask the user questions such as the library language.
+4. Tell the user that `/rebuild-library` reads the whole codebase and costs tokens in proportion to the number of folders.
+
+### Working in a project that has a library
+
+A project has a library if `.librarian/config.json` exists at its root. The `librarian-guide` skill holds the full rules. The essentials:
+
+- Folder documents give each folder's role and, for code, only `file · function · line`. Open the file at that line before relying on anything. Never infer what a function does from its name.
+- Never write what a function or file does, and never edit the `<!-- librarian:index:start/end -->` block. Hooks keep it up to date.
+- When you create a folder, fill in its role section and its role cell in the parent's subfolder table, in the library language (`language` in `.librarian/config.json`).
+- If the stop hook asks you to fill in empty roles, read the code and fill them in. Write about the folder's role only.
+- Look up reverse references (who calls what) with grep or LSP. They are not recorded in the documents.
+- If a hook recommends a split (too many index rows, folders nested too deep), tell the user. Do not restructure folders on your own.

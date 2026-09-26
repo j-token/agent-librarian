@@ -1,1 +1,0 @@
-tree-sitter-language-pack>=1.9
