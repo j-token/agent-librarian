@@ -46,21 +46,15 @@
 - 루트 문서에는 최상위 폴더들의 역할만 적습니다. 각 폴더 문서에는 바로 아래 폴더들의 역할만 적습니다.
 - 파일 · 함수 · 시작 줄 · 끝 줄은 스크립트가 만듭니다. 에이전트는 함수가 어디서 끝나는지 짐작하지 않고, 파일을 시작 줄부터 끝 줄까지 열어서 읽습니다. **함수가 무엇을 하는지는 적지 않습니다.** AI가 함수를 잘못 이해해서 틀린 설명을 적는 일(환각)을 막기 위해서입니다.
 - 파일을 편집하면 훅이 줄 번호를 바로 갱신합니다. 턴이 끝날 때마다 check 훅이 문서와 코드가 어긋난 곳을 고치고, 역할이 비어 있는 폴더가 있으면 채우라고 요청합니다.
-- 세션을 시작할 때마다(`/clear`와 압축 뒤 포함) 훅이 도서관 규칙을 에이전트의 맥락에 넣어 줍니다. 그래서 에이전트가 스킬을 먼저 불러오지 않아도 규칙을 따릅니다. `/library-rules off`로 끄고 `/library-rules on`으로 다시 켤 수 있습니다.
 - 설계 근거는 [지식 관리 이론 조사](docs/research/knowledge-management.md)에 정리했습니다.
 
 설치하면 프로젝트에 아래 파일들이 생깁니다.
 
 ```
 .librarian/config.json                  # 도서관 언어, 문서 이름, 제외 경로, 폴더 깊이 경고 기준(maxDepth),
-                                        # 세션 시작 규칙 주입 여부(injectRules), 도서관을 만든 플러그인 버전(libraryVersion)
-.librarian/skills/librarian-guide/      # 관리지침 스킬 (원본)
-.claude/skills/librarian-guide          → 원본에 연결 (Claude Code)
-.agents/skills/librarian-guide          → 원본에 연결 (Agent Skills 표준 경로)
-.codex/skills/librarian-guide           → 원본에 연결 (Codex)
+                                        # 도서관을 만든 플러그인 버전(libraryVersion)
+<모든 폴더>/CLAUDE.md 또는 AGENTS.md    # 폴더 문서
 ```
-
-연결은 Windows에서는 정션, 그 외 OS에서는 심볼릭 링크로 만듭니다. 링크를 만들 수 없으면 복사합니다. 연결 경로는 `.gitignore`에 추가되고, 연결이 끊기면 check 훅이 자동으로 복구합니다.
 
 ## 요구 사항
 
@@ -117,7 +111,7 @@ codex plugin add agent-librarian@agent-librarian
 
 2. 필요한 질문에 응답해주세요. 첫 질문은 도서관 언어입니다.
 
-3. CLAUDE.md 또는 AGENTS.md에 추가된 지식 관리 규칙이 적절한지 확인하세요.
+3. 각 CLAUDE.md 또는 AGENTS.md에 적힌 폴더 역할이 적절한지 확인하세요.
 
 ### 기존 코드 베이스가 없는 경우
 
@@ -127,19 +121,11 @@ codex plugin add agent-librarian@agent-librarian
 
 2. 필요한 질문에 응답해주세요. 첫 질문은 도서관 언어입니다.
 
-3. CLAUDE.md 또는 AGENTS.md에 추가된 지식 관리 규칙이 적절한지 확인하세요.
+3. 루트의 CLAUDE.md 또는 AGENTS.md와 `.librarian/config.json`의 설정을 확인하세요.
 
 ### 플러그인을 업데이트한 뒤
 
-플러그인을 업데이트해도(`/plugin update`) 이미 만든 도서관은 바뀌지 않습니다. check 훅이 도서관이 예전 버전으로 만들어졌다고 알려 주면 `/update-library`를 실행하세요. 새 설정 항목을 채우고, 스킬 연결을 복구하고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고칩니다. 관리지침 스킬이 새 버전과 다르면 차이를 보여 주고 바꿀지 먼저 물어봅니다.
-
-### 세션 시작 규칙 켜고 끄기
-
-- `/library-rules off`: 세션을 시작할 때 도서관 규칙을 맥락에 넣지 않습니다.
-- `/library-rules on`: 다시 넣습니다. 기본값입니다.
-- `/library-rules status`: 지금 설정을 보여 줍니다.
-
-바꾼 설정은 다음 세션(또는 `/clear` 뒤)부터 적용됩니다.
+플러그인을 업데이트해도(`/plugin update`) 이미 만든 도서관은 바뀌지 않습니다. check 훅이 도서관이 예전 버전으로 만들어졌다고 알려 주면 `/update-library`를 실행하세요. 설정 항목을 현재 버전에 맞추고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고칩니다. 예전 버전으로 만든 도서관에는 관리지침 스킬(`librarian-guide`)이 있었습니다. `/update-library`(`/rebuild-library`도 마찬가지)는 그 스킬의 연결과 `.gitignore` 항목을 지우고, `.librarian/skills/librarian-guide`는 직접 추가한 내용을 옮긴 뒤 지우라고 알려 줍니다.
 
 ## 에이전트를 위한 지침
 
@@ -157,7 +143,7 @@ codex plugin add agent-librarian@agent-librarian
 
 ### 도서관이 있는 프로젝트에서 작업할 때
 
-루트에 `.librarian/config.json`이 있으면 도서관이 있는 프로젝트입니다. 전체 규칙은 `librarian-guide` 스킬에 있고, 핵심은 다음과 같습니다.
+루트에 `.librarian/config.json`이 있으면 도서관이 있는 프로젝트입니다. 손볼 곳이 생기면 훅이 알려 줍니다. 핵심은 다음과 같습니다.
 
 - 폴더 문서에는 폴더의 역할과, 코드에 대해서는 `파일 · 함수 · 시작 줄 · 끝 줄`만 적혀 있습니다. 무언가에 의존하기 전에 그 파일을 시작 줄부터 끝 줄까지 직접 열어서 읽습니다. 함수 이름만 보고 동작을 추측하지 않습니다.
 - 함수나 파일이 무엇을 하는지 적지 않습니다. `<!-- librarian:index:start/end -->` 블록은 수정하지 않습니다. 훅이 최신 상태로 유지합니다.

@@ -62,10 +62,19 @@ def run(root, *argv):
     lb.main(["--root", str(root), *argv])
 
 
-def init(root, doc="CLAUDE.md", targets="claude,agents,codex", language=None):
+def init(root, doc="CLAUDE.md", language=None):
     extra = ["--language", language] if language else []
-    run(root, "init", "--doc", doc, "--targets", targets, *extra)
+    run(root, "init", "--doc", doc, *extra)
     run(root, "scaffold")
+
+
+def root_doc(project):
+    return (project / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def commit_all(project):
+    git(project, "add", "-A")
+    git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "c")
 
 
 def index_rows(doc: Path):
@@ -112,8 +121,8 @@ def test_scaffold_creates_hierarchy(project):
     init(project)
     for d in [".", "src", "src/auth", "src/api", "web", "native", "assets"]:
         assert (project / d / "CLAUDE.md").is_file(), d
-    root = (project / "CLAUDE.md").read_text(encoding="utf-8")
-    assert EN["root_note"] in root
+    root = root_doc(project)
+    assert root.startswith(f"# {project.name}\n\n{EN['role']}\n")  # no rules or skill pointer
     assert "| src/ |" in root and "| web/ |" in root
     assert lb.INDEX_START not in root  # the root has no code files
     sub = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
@@ -225,8 +234,7 @@ def _fill_all_roles(project):
 def test_hook_stop_after_folder_changes(project):
     init(project)
     _fill_all_roles(project)
-    git(project, "add", "-A")
-    git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "init")
+    commit_all(project)
     assert json.loads(hook("stop", {"cwd": str(project)})) == {}
 
     # a deleted folder and a brand-new folder (created without any document)
@@ -254,43 +262,11 @@ def test_hook_stop_warns_on_deep_folders_only(project):
     assert "native" not in out["systemMessage"]
 
 
-# ---------------------------------------------------------------- skill links
-
-
-def test_init_links_skills(project):
+def test_init_installs_no_skill(project):
     init(project)
-    src = project / ".librarian/skills/librarian-guide/SKILL.md"
-    assert src.is_file()
-    for t in [".claude", ".agents", ".codex"]:
-        linked = project / t / "skills/librarian-guide"
-        assert (linked / "SKILL.md").read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
-    gi = (project / ".gitignore").read_text(encoding="utf-8")
-    assert "/.claude/skills/librarian-guide" in gi
-
-
-def test_skill_copy_fallback_and_drift(project, monkeypatch):
-    def copy_only(src, dest):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dest)
-        return "copy"
-    monkeypatch.setattr(lb, "_link_dir", copy_only)
-    init(project, targets="claude")
-    lib = lb.load_library(project)
-    assert lb.check_skills(lib, fix=False).drift == []
-
-    (project / ".librarian/skills/librarian-guide/SKILL.md").write_text("changed\n", encoding="utf-8")
-    assert lb.check_skills(lib, fix=False).drift
-    lb.check_skills(lib, fix=True)
-    assert (project / ".claude/skills/librarian-guide/SKILL.md").read_text(encoding="utf-8") == "changed\n"
-
-
-def test_check_restores_broken_link(project):
-    init(project, targets="agents")
-    lib = lb.load_library(project)
-    lb._remove(project / ".agents/skills/librarian-guide")
-    assert lb.check_skills(lib, fix=False).drift
-    json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": True}))
-    assert (project / ".agents/skills/librarian-guide/SKILL.md").is_file()
+    assert not (project / ".librarian/skills").exists()
+    assert not any((project / agent / "skills").exists() for agent in (".claude", ".agents", ".codex"))
+    assert not (project / ".gitignore").exists()
 
 
 def test_pending_deepest_first(project, capsys):
@@ -318,7 +294,7 @@ def test_korean_library(project):
     text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# 상위 문서: ../CLAUDE.md")
     assert KO["role"] in text and KO["placeholder"] in text and "| 파일 | 함수 | 시작 줄 | 끝 줄 |" in text
-    assert KO["root_note"] in (project / "CLAUDE.md").read_text(encoding="utf-8")
+    assert root_doc(project).startswith(f"# {project.name}\n\n{KO['role']}\n")
     assert "src/auth" in [r for r in lb.sync_dirs(lb.load_library(project), None, False).pending]
 
 
@@ -335,7 +311,6 @@ def test_language_switch_keeps_roles(project):
     assert EN["role"] in text and "소스 코드" in text
     assert "| auth/ | 인증 |" in text and f"| api/ | {EN['placeholder']} |" in text
     assert not any(v in text for v in (KO["role"], KO["subdirs"], KO["placeholder"]))
-    assert EN["root_note"] in (project / "CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_unknown_language_uses_english_headings(project):
@@ -420,15 +395,14 @@ def test_post_edit_updates_parent_of_topmost_new_folder(project):
     new.parent.mkdir(parents=True)
     new.write_text("def q(): pass\n", encoding="utf-8")
     hook("post-edit", {"cwd": str(project), "tool_input": {"file_path": str(new)}})
-    assert "| x/ |" in (project / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "| x/ |" in root_doc(project)
     assert "| y z/ |" in (project / "x/CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_renamed_folder_keeps_role_cell(project):
     init(project)
     _fill_all_roles(project)
-    git(project, "add", "-A")
-    git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "init")
+    commit_all(project)
     doc = project / "src/CLAUDE.md"
     doc.write_text(doc.read_text(encoding="utf-8").replace("| auth/ | role |", "| auth/ | Login |"),
                    encoding="utf-8")
@@ -541,7 +515,7 @@ def test_negative_limits_fall_back(project):
     assert lb.load_library(project).config["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
 
 
-# ---------------------------------------------------------------- session-start rules
+# ---------------------------------------------------------------- config
 
 
 def read_config(project):
@@ -552,100 +526,21 @@ def write_config(project, cfg):
     (project / ".librarian/config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
-def session_output(project):
-    """The hookSpecificOutput of the session-start hook, or None when it printed nothing."""
-    out = hook("session-start", {"cwd": str(project)})
-    return json.loads(out)["hookSpecificOutput"] if out else None
-
-
-def session_context(project):
-    return session_output(project)["additionalContext"]
-
-
-def test_session_start_injects_rules_without_frontmatter(project):
+# keys written by versions that had the index-row warning, the session-start hook, or the
+# rules skill links
+@pytest.mark.parametrize("key,value", [("maxEntries", 60), ("injectRules", False),
+                                       ("targets", ["claude"])])
+@pytest.mark.parametrize("command", ["update", "init"])
+def test_rewriting_config_drops_removed_key_and_keeps_others(project, key, value, command):
     init(project)
-    out = session_output(project)
-    assert out["hookEventName"] == "SessionStart"
-    context = out["additionalContext"]
-    assert context.startswith("# Library rules")
-    assert "name: librarian-guide" not in context
-    assert "Library language: en, folder document: CLAUDE.md" in context
+    write_config(project, {"language": "en", "maxDepth": 4, key: value})
 
+    run(project, "index", "--all")  # must not raise
+    run(project, command)
 
-def test_session_start_strips_empty_frontmatter(project):
-    init(project)
-    skill = project / ".librarian/skills/librarian-guide/SKILL.md"
-    skill.write_text("---\n---\n# My rules\n", encoding="utf-8")
-    assert session_context(project).startswith("# My rules")
-
-
-def test_rules_off_stops_injection_and_on_restores_it(project):
-    init(project)
-    run(project, "rules", "off")
-    assert read_config(project)["injectRules"] is False
-    assert session_output(project) is None
-
-    run(project, "rules", "on")
-    assert read_config(project)["injectRules"] is True
-    assert "# Library rules" in session_context(project)
-
-
-def test_rules_off_changes_only_its_own_key(project):
-    init(project)
-    write_config(project, {"language": "en"})
-    run(project, "rules", "off")
-    assert read_config(project) == {"language": "en", "injectRules": False}
-
-
-def test_rules_status_prints_current_state(project, capsys):
-    init(project)
-    capsys.readouterr()
-    run(project, "rules", "status")
-    assert capsys.readouterr().out.strip() == "[rules] on"
-
-
-def test_config_without_inject_key_injects_rules(project):
-    init(project)
     cfg = read_config(project)
-    del cfg["injectRules"]
-    write_config(project, cfg)
-    assert "# Library rules" in session_context(project)
-
-
-def test_inject_rules_string_false_turns_injection_off(project):
-    init(project)
-    cfg = read_config(project)
-    cfg["injectRules"] = "false"
-    write_config(project, cfg)
-    assert session_output(project) is None
-
-
-@pytest.mark.parametrize("value", [None, "maybe"])
-def test_inject_rules_null_or_unknown_value_keeps_injection_on(project, value):
-    init(project)
-    cfg = read_config(project)
-    cfg["injectRules"] = value
-    write_config(project, cfg)
-    assert "# Library rules" in session_context(project)
-
-
-def test_session_start_without_library_prints_nothing(tmp_path):
-    assert hook("session-start", {"cwd": str(tmp_path)}) == ""
-
-
-def test_session_start_command_from_hooks_json_prints_rules(project):
-    init(project)
-    hooks = json.loads((REPO_ROOT / "hooks/hooks.json").read_text(encoding="utf-8"))
-    command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT)}
-    payload = json.dumps({"cwd": str(project), "hook_event_name": "SessionStart"})
-
-    res = subprocess.run(command, shell=True, cwd=project, env=env, input=payload.encode("utf-8"),
-                         capture_output=True, timeout=60)
-
-    out = json.loads(res.stdout.decode("utf-8"))
-    assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert out["hookSpecificOutput"]["additionalContext"] == session_context(project)
+    assert key not in cfg
+    assert cfg["maxDepth"] == 4
 
 
 # ---------------------------------------------------------------- update
@@ -657,75 +552,7 @@ def test_update_fills_missing_keys_and_records_version(project):
     run(project, "update")
     cfg = read_config(project)
     assert cfg["libraryVersion"] == lb.plugin_version()
-    assert cfg["injectRules"] is True
-    assert cfg["targets"] == lb.DEFAULT_CONFIG["targets"]
-
-
-@pytest.mark.parametrize("command", ["update", "init"])
-def test_rewriting_config_drops_legacy_max_entries(project, command):
-    init(project)
-    write_config(project, {"language": "en", "maxEntries": 60, "maxDepth": 4})
-    run(project, command)
-    cfg = read_config(project)
-    assert "maxEntries" not in cfg
-    assert cfg["maxDepth"] == 4
-
-
-def test_update_shows_diff_for_edited_rules_and_keeps_them(project, capsys):
-    init(project)
-    skill = project / ".librarian/skills/librarian-guide/SKILL.md"
-    skill.write_text(skill.read_text(encoding="utf-8") + "\nMy own rule.\n", encoding="utf-8")
-    capsys.readouterr()
-    run(project, "update")
-    out = capsys.readouterr().out
-    assert "[skill-diff] -My own rule." in out
-    assert "My own rule." in skill.read_text(encoding="utf-8")
-
-
-def test_update_replace_skill_restores_template(project, capsys):
-    init(project)
-    skill = project / ".librarian/skills/librarian-guide/SKILL.md"
-    skill.write_text("edited\n", encoding="utf-8")
-    run(project, "update", "--replace-skill")
-    assert lb._same_tree(skill.parent, lb.TEMPLATE_DIR)
-    assert "[skill-diff]" not in capsys.readouterr().out
-
-
-def test_update_replace_skill_updates_linked_skill(project):
-    init(project, targets="claude")
-    (project / ".librarian/skills/librarian-guide/SKILL.md").write_text("edited\n", encoding="utf-8")
-    run(project, "update", "--replace-skill")
-    linked = project / ".claude/skills/librarian-guide/SKILL.md"
-    template = lb.TEMPLATE_DIR / "SKILL.md"
-    assert linked.read_bytes() == template.read_bytes()
-
-
-def test_update_ignores_line_ending_only_difference(project, tmp_path_factory, monkeypatch,
-                                                    capsys):
-    init(project)
-    # a fixed template, because the real one's line endings depend on git's autocrlf
-    template = tmp_path_factory.mktemp("template")
-    (template / "SKILL.md").write_bytes(b"rule\n")
-    monkeypatch.setattr(lb, "TEMPLATE_DIR", template)
-    (project / ".librarian/skills/librarian-guide/SKILL.md").write_bytes(b"rule\r\n")
-    capsys.readouterr()
-    run(project, "update")
-    assert "[skill-diff]" not in capsys.readouterr().out
-
-
-def test_update_reports_file_only_in_library(project, capsys):
-    init(project)
-    (project / ".librarian/skills/librarian-guide/extra.md").write_text("mine\n", encoding="utf-8")
-    capsys.readouterr()
-    run(project, "update")
-    assert "[skill-diff] extra.md: only in library" in capsys.readouterr().out
-
-
-def test_update_restores_removed_skill_link(project):
-    init(project, targets="agents")
-    lb._remove(project / ".agents/skills/librarian-guide")
-    run(project, "update")
-    assert (project / ".agents/skills/librarian-guide/SKILL.md").is_file()
+    assert cfg["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
 
 
 def test_update_keeps_korean_headings_and_roles(project):
@@ -787,3 +614,144 @@ def test_stop_hook_has_no_update_notice_when_versions_match(project):
     init(project)
     out = stop_with_library_version(project, lb.plugin_version())
     assert "systemMessage" not in out
+
+
+# ---------------------------------------------------------------- legacy rules skill
+
+
+# the exact lines older versions wrote, kept literal because they test real old documents
+LEGACY_EN_NOTE = "This repository follows the rules of the `librarian-guide` skill."
+LEGACY_KO_NOTE = "이 저장소는 `librarian-guide` 스킬의 규칙을 따릅니다."
+LEGACY_GITIGNORE = ("node_modules/\n"
+                    "\n"
+                    "# agent-librarian: skill links (restored automatically by check)\n"
+                    "/.claude/skills/librarian-guide\n"
+                    "/.agents/skills/librarian-guide\n"
+                    "/.codex/skills/librarian-guide\n")
+
+
+def write_root_with_note(project, note):
+    body = root_doc(project).split("\n", 2)[2]  # everything after "# <name>" and a blank line
+    (project / "CLAUDE.md").write_text(
+        f"# {project.name}\n\n{note}\n\nOur own intro.\n\n{body}", encoding="utf-8")
+
+
+@pytest.mark.parametrize("language,note", [("en", LEGACY_EN_NOTE), ("ko", LEGACY_KO_NOTE)])
+def test_sync_removes_legacy_root_note_and_keeps_user_text(project, language, note):
+    init(project, language=language)
+    write_root_with_note(project, note)
+
+    run(project, "index", "--all")
+
+    out = root_doc(project)
+    role_heading = lb.DOC_STRINGS[language]["role"]
+    assert out.startswith(f"# {project.name}\n\nOur own intro.\n\n{role_heading}\n")
+    run(project, "index", "--all")
+    assert root_doc(project) == out  # idempotent
+
+
+def test_legacy_root_note_inside_code_fence_is_kept(project):
+    init(project)
+    fenced = f"```\n{LEGACY_EN_NOTE}\n```"
+    write_root_with_note(project, fenced)
+    run(project, "index", "--all")
+    assert fenced in root_doc(project)
+
+
+def make_legacy_skill_install(project):
+    """What 0.4 installed: a source folder, a junction/symlink in .claude and copies (the
+    fallback when linking failed) in .agents and .codex, plus the .gitignore lines."""
+    source = project / ".librarian/skills/librarian-guide"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_bytes(b"---\nname: librarian-guide\n---\n# rules\n")
+    link = project / ".claude/skills/librarian-guide"
+    link.parent.mkdir(parents=True)
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(source), str(link))
+    else:
+        os.symlink(source, link, target_is_directory=True)
+    for agent in (".agents", ".codex"):
+        copy = project / agent / "skills/librarian-guide"
+        copy.mkdir(parents=True)
+        # a CRLF checkout of the same text still counts as an unedited copy
+        (copy / "SKILL.md").write_bytes(b"---\r\nname: librarian-guide\r\n---\r\n# rules\r\n")
+    (project / ".gitignore").write_text(LEGACY_GITIGNORE, encoding="utf-8")
+    return source
+
+
+@pytest.mark.parametrize("command", ["update", "init"])
+def test_legacy_skill_links_and_gitignore_lines_are_removed(project, capsys, command):
+    init(project)
+    source = make_legacy_skill_install(project)
+    capsys.readouterr()
+
+    run(project, command)
+
+    out = capsys.readouterr().out
+    for agent in (".claude", ".agents", ".codex"):
+        assert not os.path.lexists(project / agent / "skills/librarian-guide"), agent
+        assert f"[updated] {agent}/skills/librarian-guide (removed)" in out
+    # empty folders go, but .claude stays because Claude Code keeps settings there
+    assert not os.path.lexists(project / ".agents") and not os.path.lexists(project / ".codex")
+    assert not os.path.lexists(project / ".claude/skills") and (project / ".claude").is_dir()
+    assert (project / ".gitignore").read_text(encoding="utf-8") == "node_modules/\n"
+    # the source may hold rules the user wrote, so it stays and a warning names it
+    assert (source / "SKILL.md").is_file()
+    assert "[warning] .librarian/skills/librarian-guide is no longer used" in out
+
+
+def test_legacy_skill_cleanup_keeps_other_skills_and_edited_copies(project, capsys):
+    init(project)
+    make_legacy_skill_install(project)
+    (project / ".claude/skills/other").mkdir()  # a skill that is not ours
+    edited = project / ".agents/skills/librarian-guide/SKILL.md"
+    edited.write_bytes(edited.read_bytes() + b"My own rule.\n")
+    capsys.readouterr()
+
+    run(project, "update")
+
+    out = capsys.readouterr().out
+    assert (project / ".claude/skills/other").is_dir()
+    assert edited.is_file()
+    assert "[warning] .agents/skills/librarian-guide differs from" in out
+    assert not os.path.lexists(project / ".codex/skills/librarian-guide")
+
+
+def test_gitignore_cleanup_keeps_bom_and_crlf(project):
+    init(project)
+    legacy = "﻿" + LEGACY_GITIGNORE.replace("\n", "\r\n")
+    (project / ".gitignore").write_bytes(legacy.encode("utf-8"))
+    run(project, "update")
+    assert (project / ".gitignore").read_bytes() == b"\xef\xbb\xbfnode_modules/\r\n"
+
+
+def test_update_deletes_gitignore_that_held_only_skill_lines(project):
+    init(project)
+    (project / ".gitignore").write_text("\n" + LEGACY_GITIGNORE.split("\n", 1)[1], encoding="utf-8")
+    run(project, "update")
+    assert not (project / ".gitignore").exists()
+
+
+def test_update_without_legacy_skill_prints_no_skill_lines(project, capsys):
+    init(project)
+    capsys.readouterr()
+    run(project, "update")
+    out = capsys.readouterr().out
+    assert "librarian-guide" not in out and ".gitignore" not in out
+
+
+def test_stop_command_from_hooks_json_removes_legacy_root_note(project):
+    init(project)
+    write_root_with_note(project, LEGACY_EN_NOTE)
+    hooks = json.loads((REPO_ROOT / "hooks/hooks.json").read_text(encoding="utf-8"))
+    command = hooks["hooks"]["Stop"][0]["hooks"][0]["command"]
+    env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT)}
+    payload = json.dumps({"cwd": str(project), "hook_event_name": "Stop",
+                          "stop_hook_active": True})
+
+    res = subprocess.run(command, shell=True, cwd=project, env=env, input=payload.encode("utf-8"),
+                         capture_output=True, timeout=60)
+
+    assert res.returncode == 0, res.stderr.decode("utf-8", "replace")
+    assert LEGACY_EN_NOTE not in root_doc(project) and "Our own intro." in root_doc(project)
