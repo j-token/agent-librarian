@@ -50,7 +50,7 @@ Installing the library adds the following to your project:
 
 ```
 .librarian/config.json                  # library language, document name, excluded paths, split thresholds (maxEntries, maxDepth),
-                                        # rule injection at session start (injectRules)
+                                        # rule injection at session start (injectRules), plugin version the library was built with (libraryVersion)
 .librarian/skills/librarian-guide/      # the management-rules skill (source)
 .claude/skills/librarian-guide          → linked to the source (Claude Code)
 .agents/skills/librarian-guide          → linked to the source (Agent Skills standard path)
@@ -125,6 +125,10 @@ Once the plugin is installed, build your "library" with one of the commands belo
 
 3. Check that the knowledge management rules added to CLAUDE.md or AGENTS.md look right to you.
 
+### After updating the plugin
+
+Updating the plugin (`/plugin update`) does not change a library that already exists. When the check hook says the library was built with an older version, run `/update-library`. It fills in new config keys, restores the skill links, and rewrites every folder document in the current format while keeping the roles you wrote. If your library-rules skill differs from the new version, it shows you the difference and asks before replacing it.
+
 ### Turning the session-start rules on or off
 
 - `/library-rules off`: stop adding the library rules to the context at session start.
@@ -157,3 +161,4 @@ A project has a library if `.librarian/config.json` exists at its root. The `lib
 - If the stop hook asks you to fill in empty roles, read the code and fill them in. Write about the folder's role only.
 - Look up reverse references (who calls what) with grep or LSP. They are not recorded in the documents.
 - If a hook recommends a split (too many index rows, folders nested too deep), tell the user. Do not restructure folders on your own.
+- If the stop hook says the library was built with an older plugin version, ask the user to run `/update-library`. It cannot be invoked by a model.

@@ -8,6 +8,7 @@ file · function · line and never describes what a function does.
 from __future__ import annotations
 
 import argparse
+import difflib
 import fnmatch
 import json
 import os
@@ -168,6 +169,22 @@ def _is_true(value, default: bool = False) -> bool:
     if word in ("false", "0", "off", "no"):
         return False
     return default
+
+
+def plugin_version() -> str | None:
+    """None when plugin.json is missing or unreadable, so callers can skip version checks."""
+    try:
+        version = json.loads(_read(PLUGIN_ROOT / "plugin.json") or "{}").get("version")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return str(version) if version else None
+
+
+def _version_tuple(version: str) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return None
 
 
 def _is_excluded(lib: Library, rel_parts: tuple[str, ...]) -> bool:
@@ -573,12 +590,15 @@ def changed_dirs(lib: Library) -> set[Path] | None:
 # ---------------------------------------------------------------- skill links
 
 
+def _tree_files(root: Path) -> set[str]:
+    return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+
 def _same_tree(a: Path, b: Path) -> bool:
     if not a.is_dir() or not b.is_dir():
         return False
-    fa = sorted(p.relative_to(a).as_posix() for p in a.rglob("*") if p.is_file())
-    fb = sorted(p.relative_to(b).as_posix() for p in b.rglob("*") if p.is_file())
-    return fa == fb and all((a / f).read_bytes() == (b / f).read_bytes() for f in fa)
+    fa = _tree_files(a)
+    return fa == _tree_files(b) and all((a / f).read_bytes() == (b / f).read_bytes() for f in fa)
 
 
 def _is_link(p: Path) -> bool:
@@ -640,6 +660,25 @@ def library_rules_text(lib: Library) -> str:
     if not skill.is_file():
         skill = TEMPLATE_DIR / "SKILL.md"
     return _FRONTMATTER.sub("", skill.read_text(encoding="utf-8-sig"), count=1).strip()
+
+
+def _skill_diff(library_dir: Path, template_dir: Path) -> list[str]:
+    """Differences between the library's rules skill and the plugin's. Line endings are
+    ignored, because git's autocrlf changes them on ordinary installs."""
+    library_files, template_files = _tree_files(library_dir), _tree_files(template_dir)
+    lines: list[str] = []
+    for name in sorted(library_files | template_files):
+        if name not in template_files:
+            lines.append(f"{name}: only in library")
+            continue
+        if name not in library_files:
+            lines.append(f"{name}: only in plugin")
+            continue
+        current_lines = (_read(library_dir / name) or "").splitlines()
+        plugin_lines = (_read(template_dir / name) or "").splitlines()
+        lines.extend(difflib.unified_diff(current_lines, plugin_lines,
+                                          f"library/{name}", f"plugin/{name}", lineterm=""))
+    return lines
 
 
 def check_skills(lib: Library, fix: bool) -> Report:
@@ -743,6 +782,26 @@ def hook_post_edit(payload: dict) -> None:
                                       "additionalContext": "\n".join(msgs)}})
 
 
+def _version_notice(library_version: str | None, plugin_ver: str | None) -> str | None:
+    """Compare the plugin version the library was built with against the running plugin."""
+    if plugin_ver is None or library_version == plugin_ver:
+        return None
+    update_library = (f"library was built with {library_version or 'an older version'}, "
+                      f"plugin is {plugin_ver}: run /update-library")
+    if not library_version:
+        return update_library
+    library_tuple = _version_tuple(library_version)
+    plugin_tuple = _version_tuple(plugin_ver)
+    if library_tuple is None or plugin_tuple is None:
+        return update_library  # unparsable version: any difference means "update"
+    if plugin_tuple > library_tuple:
+        return update_library
+    if plugin_tuple < library_tuple:
+        return (f"library was built with {library_version}, but the plugin is {plugin_ver}: "
+                "update the plugin")
+    return None
+
+
 def hook_stop(payload: dict) -> None:
     cwd = Path(payload.get("cwd") or os.getcwd())
     lib = load_library(cwd)
@@ -753,8 +812,12 @@ def hook_stop(payload: dict) -> None:
     changed = changed_dirs(lib)
     report.merge(sync_dirs(lib, changed, fix=True))
     out: dict = {}
-    if report.warnings:
-        out["systemMessage"] = "librarian: " + "; ".join(report.warnings)
+    notices = list(report.warnings)
+    version_notice = _version_notice(lib.config.get("libraryVersion"), plugin_version())
+    if version_notice:
+        notices.append(version_notice)
+    if notices:
+        out["systemMessage"] = "librarian: " + "; ".join(notices)
     active = _is_true(payload.get("stop_hook_active"))
     if report.pending and not active:
         out["decision"] = "block"
@@ -806,6 +869,7 @@ def cmd_init(args) -> None:
         cfg["targets"] = [t for t in args.targets.split(",") if t]
     if args.exclude:
         cfg["exclude"] = sorted(set(cfg.get("exclude", [])) | set(args.exclude))
+    cfg["libraryVersion"] = plugin_version()
     _write_config(root, cfg)
     lib = Library(root=root, config=cfg)
     report = check_skills(lib, fix=True)
@@ -869,6 +933,44 @@ def cmd_rules(args) -> None:
     print(f"[rules] {'on' if inject else 'off'}")
 
 
+def _replace_with_template(src: Path) -> None:
+    """Swap src for a fresh template copy. The new copy is complete before the old one is
+    moved away, so a failure never leaves the skill folder missing."""
+    staged = src.with_name(f"{src.name}.new")
+    backup = src.with_name(f"{src.name}.bak")
+    for leftover in (staged, backup):
+        _remove(leftover)
+    shutil.copytree(TEMPLATE_DIR, staged)
+    src.rename(backup)
+    staged.rename(src)
+    _remove(backup)
+
+
+def cmd_update(args) -> None:
+    lib = _require(Path(args.root))
+    # migration: unlike `rules`, this intentionally writes the full config, so keys added
+    # in newer versions (filled with defaults by _read_config) appear in the file
+    lib.config["libraryVersion"] = plugin_version()
+    cfg_path = _write_config(lib.root, lib.config)
+    print(f"[config] {lib.rel(cfg_path)}")
+
+    report = Report()
+    src = skill_source(lib)
+    skill_diff = _skill_diff(src, TEMPLATE_DIR) if src.is_dir() else []
+    if skill_diff:
+        if args.replace_skill:
+            _replace_with_template(src)
+            report.updated.append(lib.rel(src))
+        else:  # the user may have edited the rules; show the diff and let them decide
+            for line in skill_diff:
+                print(f"[skill-diff] {line}")
+
+    report.merge(check_skills(lib, fix=True))
+    _ensure_gitignore(lib)
+    report.merge(sync_dirs(lib, None, fix=True))
+    _print_report(report)
+
+
 def cmd_hook(args) -> None:
     raw = sys.stdin.buffer.read().decode("utf-8", "replace")
     try:
@@ -921,6 +1023,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("rules")
     p.add_argument("state", choices=["on", "off", "status"])
     p.set_defaults(func=cmd_rules)
+
+    p = sub.add_parser("update")
+    p.add_argument("--replace-skill", action="store_true",
+                   help="replace the library's rules skill with the plugin template")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("hook")
     p.add_argument("event", choices=["post-edit", "stop", "session-start"])

@@ -53,7 +53,7 @@
 
 ```
 .librarian/config.json                  # 도서관 언어, 문서 이름, 제외 경로, 분리 기준(maxEntries, maxDepth),
-                                        # 세션 시작 규칙 주입 여부(injectRules)
+                                        # 세션 시작 규칙 주입 여부(injectRules), 도서관을 만든 플러그인 버전(libraryVersion)
 .librarian/skills/librarian-guide/      # 관리지침 스킬 (원본)
 .claude/skills/librarian-guide          → 원본에 연결 (Claude Code)
 .agents/skills/librarian-guide          → 원본에 연결 (Agent Skills 표준 경로)
@@ -129,6 +129,10 @@ codex plugin add agent-librarian@agent-librarian
 
 3. CLAUDE.md 또는 AGENTS.md에 추가된 지식 관리 규칙이 적절한지 확인하세요.
 
+### 플러그인을 업데이트한 뒤
+
+플러그인을 업데이트해도(`/plugin update`) 이미 만든 도서관은 바뀌지 않습니다. check 훅이 도서관이 예전 버전으로 만들어졌다고 알려 주면 `/update-library`를 실행하세요. 새 설정 항목을 채우고, 스킬 연결을 복구하고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고칩니다. 관리지침 스킬이 새 버전과 다르면 차이를 보여 주고 바꿀지 먼저 물어봅니다.
+
 ### 세션 시작 규칙 켜고 끄기
 
 - `/library-rules off`: 세션을 시작할 때 도서관 규칙을 맥락에 넣지 않습니다.
@@ -161,3 +165,4 @@ codex plugin add agent-librarian@agent-librarian
 - Stop 훅이 빈 역할을 채우라고 요청하면 코드를 읽고 채웁니다. 폴더의 역할만 씁니다.
 - 역참조(누가 무엇을 호출하는지)는 grep이나 LSP로 조회합니다. 문서에는 기록하지 않습니다.
 - 훅이 분리를 권고하면(인덱스 행 수 초과, 폴더 깊이 초과) 사용자에게 알립니다. 폴더 구조는 임의로 바꾸지 않습니다.
+- Stop 훅이 도서관이 예전 플러그인 버전으로 만들어졌다고 알리면 사용자에게 `/update-library` 실행을 요청합니다. 이 스킬은 모델이 호출할 수 없습니다.

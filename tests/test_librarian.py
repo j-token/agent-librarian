@@ -628,3 +628,134 @@ def test_session_start_command_from_hooks_json_prints_rules(project):
     out = json.loads(res.stdout.decode("utf-8"))
     assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     assert out["hookSpecificOutput"]["additionalContext"] == session_context(project)
+
+
+# ---------------------------------------------------------------- update
+
+
+def test_update_fills_missing_keys_and_records_version(project):
+    init(project)
+    write_config(project, {"language": "en", "docName": "CLAUDE.md"})
+    run(project, "update")
+    cfg = read_config(project)
+    assert cfg["libraryVersion"] == lb.plugin_version()
+    assert cfg["injectRules"] is True
+    assert cfg["targets"] == lb.DEFAULT_CONFIG["targets"]
+
+
+def test_update_shows_diff_for_edited_rules_and_keeps_them(project, capsys):
+    init(project)
+    skill = project / ".librarian/skills/librarian-guide/SKILL.md"
+    skill.write_text(skill.read_text(encoding="utf-8") + "\nMy own rule.\n", encoding="utf-8")
+    capsys.readouterr()
+    run(project, "update")
+    out = capsys.readouterr().out
+    assert "[skill-diff] -My own rule." in out
+    assert "My own rule." in skill.read_text(encoding="utf-8")
+
+
+def test_update_replace_skill_restores_template(project, capsys):
+    init(project)
+    skill = project / ".librarian/skills/librarian-guide/SKILL.md"
+    skill.write_text("edited\n", encoding="utf-8")
+    run(project, "update", "--replace-skill")
+    assert lb._same_tree(skill.parent, lb.TEMPLATE_DIR)
+    assert "[skill-diff]" not in capsys.readouterr().out
+
+
+def test_update_replace_skill_updates_linked_skill(project):
+    init(project, targets="claude")
+    (project / ".librarian/skills/librarian-guide/SKILL.md").write_text("edited\n", encoding="utf-8")
+    run(project, "update", "--replace-skill")
+    linked = project / ".claude/skills/librarian-guide/SKILL.md"
+    template = lb.TEMPLATE_DIR / "SKILL.md"
+    assert linked.read_bytes() == template.read_bytes()
+
+
+def test_update_ignores_line_ending_only_difference(project, tmp_path_factory, monkeypatch,
+                                                    capsys):
+    init(project)
+    # a fixed template, because the real one's line endings depend on git's autocrlf
+    template = tmp_path_factory.mktemp("template")
+    (template / "SKILL.md").write_bytes(b"rule\n")
+    monkeypatch.setattr(lb, "TEMPLATE_DIR", template)
+    (project / ".librarian/skills/librarian-guide/SKILL.md").write_bytes(b"rule\r\n")
+    capsys.readouterr()
+    run(project, "update")
+    assert "[skill-diff]" not in capsys.readouterr().out
+
+
+def test_update_reports_file_only_in_library(project, capsys):
+    init(project)
+    (project / ".librarian/skills/librarian-guide/extra.md").write_text("mine\n", encoding="utf-8")
+    capsys.readouterr()
+    run(project, "update")
+    assert "[skill-diff] extra.md: only in library" in capsys.readouterr().out
+
+
+def test_update_restores_removed_skill_link(project):
+    init(project, targets="agents")
+    lb._remove(project / ".agents/skills/librarian-guide")
+    run(project, "update")
+    assert (project / ".agents/skills/librarian-guide/SKILL.md").is_file()
+
+
+def test_update_keeps_korean_headings_and_roles(project):
+    init(project, language="ko")
+    doc = project / "src/CLAUDE.md"
+    doc.write_text(doc.read_text(encoding="utf-8").replace(KO["placeholder"], "소스 코드", 1),
+                   encoding="utf-8")
+    run(project, "update")
+    text = doc.read_text(encoding="utf-8")
+    assert text.startswith("# 상위 문서: ../CLAUDE.md")
+    assert KO["role"] in text and "소스 코드" in text
+
+
+# ---------------------------------------------------------------- stop hook version notice
+
+
+# These tests pass stop_hook_active: True only to suppress the empty-role block, so the
+# output holds nothing but the version notice.
+
+
+def stop_with_library_version(project, version):
+    cfg = read_config(project)
+    if version is None:
+        del cfg["libraryVersion"]
+    else:
+        cfg["libraryVersion"] = version
+    write_config(project, cfg)
+    return json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": True}))
+
+
+def test_stop_hook_asks_for_update_when_library_is_older(project):
+    init(project)
+    out = stop_with_library_version(project, "0.0.1")
+    assert "/update-library" in out["systemMessage"]
+
+
+def test_stop_hook_asks_for_update_when_library_has_no_version(project):
+    init(project)
+    out = stop_with_library_version(project, None)
+    assert "/update-library" in out["systemMessage"]
+
+
+def test_stop_hook_asks_to_update_plugin_when_library_is_newer(project):
+    init(project)
+    out = stop_with_library_version(project, "99.0.0")
+    assert "update the plugin" in out["systemMessage"]
+    assert "/update-library" not in out["systemMessage"]
+
+
+def test_stop_hook_without_plugin_version_still_blocks_on_empty_roles(project, monkeypatch):
+    init(project)
+    monkeypatch.setattr(lb, "plugin_version", lambda: None)
+    out = json.loads(hook("stop", {"cwd": str(project)}))
+    assert out["decision"] == "block"
+    assert "systemMessage" not in out
+
+
+def test_stop_hook_has_no_update_notice_when_versions_match(project):
+    init(project)
+    out = stop_with_library_version(project, lb.plugin_version())
+    assert "systemMessage" not in out
