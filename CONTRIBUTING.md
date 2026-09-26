@@ -47,7 +47,7 @@ These rules are the core of the project. Changes that break them will not be acc
 
 - Every change to behavior needs a test in `tests/`.
 - Test through the real entry points instead of internal helpers: the CLI (`lb.main`) and the hook helper `hook()` in `tests/test_librarian.py`.
-- Name each test after the situation and the expected result, for example `test_rules_off_changes_only_its_own_key`.
+- Name each test after the situation and the expected result, for example `test_scaffold_does_not_overwrite`.
 - If you change the symbol extractor (`scripts/extract.py`), run `python dev/compare.py <dir>` on real code before and after your change, and include both results in the pull request.
 
 ## Branches

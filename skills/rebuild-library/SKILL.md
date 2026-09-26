@@ -19,7 +19,7 @@ Follow steps 1–2 of `<plugin>/skills/build-library/SKILL.md` exactly. The libr
 ## 2. Generate the mechanical parts first
 
 ```bash
-python <plugin>/scripts/librarian.py init --language <answer 1> --doc <answer 2> --targets <answer 3> [--exclude ...]
+python <plugin>/scripts/librarian.py init --language <answer 1> --doc <answer 2> [--exclude <answer 3>...]
 python <plugin>/scripts/librarian.py scaffold
 python <plugin>/scripts/librarian.py index --all
 ```

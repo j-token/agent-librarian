@@ -1,6 +1,6 @@
 ---
 name: build-library
-description: Installs a agent-librarian library in a new project (or one with little code). Creates the config file, the library-rules skill, and the folder document skeletons.
+description: Installs a agent-librarian library in a new project (or one with little code). Creates the config file and the folder document skeletons.
 disable-model-invocation: true
 ---
 
@@ -19,11 +19,7 @@ Ask with an interactive question tool if one is available; otherwise ask in a no
    - `CLAUDE.md`: Claude Code only
    - `AGENTS.md`: Codex and other agents
    - `both`: the content goes in AGENTS.md, and CLAUDE.md contains only `@AGENTS.md`
-3. **Where to link the library-rules skill** (multiple choice; default is all)
-   - `claude` → `.claude/skills`
-   - `agents` → `.agents/skills`
-   - `codex` → `.codex/skills`
-4. **Additional paths to exclude**
+3. **Additional paths to exclude**
    - Excluded by default: paths in `.gitignore`, folders starting with a dot, `node_modules`, `dist`, `build`, and similar
 
 ## 2. Check Python
@@ -37,14 +33,11 @@ The plugin needs only Python 3.9 or later; it has no other dependencies. If Pyth
 ## 3. Install
 
 ```bash
-python <plugin>/scripts/librarian.py init --language <answer 1> --doc <answer 2> --targets <answer 3, comma-separated> [--exclude <answer 4>...]
+python <plugin>/scripts/librarian.py init --language <answer 1> --doc <answer 2> [--exclude <answer 3>...]
 python <plugin>/scripts/librarian.py scaffold
 ```
 
-- `init` does three things:
-  - Creates `.librarian/config.json`.
-  - Installs `.librarian/skills/librarian-guide` and links it into each target. It uses a junction on Windows and a symbolic link elsewhere, and copies if linking fails.
-  - Adds the link paths to `.gitignore`.
+- `init` creates `.librarian/config.json`. In a library built with an older version, it also removes the old rules skill links the same way `update` does (see `<plugin>/skills/update-library/SKILL.md`); pass any `warning` lines on to the user.
 - `scaffold` creates a skeleton document in every folder that lacks one.
 
 ## 4. Fill in roles
@@ -53,11 +46,10 @@ If `python <plugin>/scripts/librarian.py pending` lists any folders, fill them i
 
 ## 5. Wrap up
 
-- Show the user the root document and `.librarian/config.json`, and ask them to confirm the rules look right.
+- Show the user the root document and `.librarian/config.json`, and ask them to confirm the settings and roles look right.
 - Explain what happens from now on:
   - When a file is edited, a hook updates the index.
-  - At the end of each turn, a check hook verifies that the documents match the code.
-  - At the start of each session, a hook adds the library rules to the context. `/library-rules off` turns this off.
+  - At the end of each turn, a check hook fixes documents that no longer match the code and asks the agent to fill in any folder whose role is empty or missing.
 - Tell Codex users two things:
   - `~/.codex/config.toml` needs `[features] hooks = true`.
   - Codex runs an installed plugin's hooks only after they are trusted once in `/hooks`.

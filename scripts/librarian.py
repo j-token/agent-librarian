@@ -8,7 +8,6 @@ file · function · start line · end line and never describes what a function d
 from __future__ import annotations
 
 import argparse
-import difflib
 import fnmatch
 import json
 import os
@@ -25,9 +24,7 @@ from extract import EXT_LANG, extract_symbols  # noqa: E402
 
 CONFIG_DIR = ".librarian"
 CONFIG_FILE = "config.json"
-GUIDE_SKILL = "librarian-guide"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE_DIR = PLUGIN_ROOT / "templates" / GUIDE_SKILL
 
 INDEX_START = "<!-- librarian:index:start -->"
 INDEX_END = "<!-- librarian:index:end -->"
@@ -37,7 +34,6 @@ INDEX_END = "<!-- librarian:index:end -->"
 DOC_STRINGS = {
     "en": {
         "parent": "# Parent: ../{doc}",
-        "root_note": "This repository follows the rules of the `librarian-guide` skill.",
         "role": "## What this folder is for",
         "subdirs": "## Subfolders",
         "placeholder": "_(to be written)_",
@@ -46,7 +42,6 @@ DOC_STRINGS = {
     },
     "ko": {
         "parent": "# 상위 문서: ../{doc}",
-        "root_note": "이 저장소는 `librarian-guide` 스킬의 규칙을 따릅니다.",
         "role": "## 이 폴더의 역할",
         "subdirs": "## 하위 폴더",
         "placeholder": "_(작성 필요)_",
@@ -57,7 +52,12 @@ DOC_STRINGS = {
 ROLE_HEADINGS = {s["role"] for s in DOC_STRINGS.values()}
 SUBDIR_HEADINGS = {s["subdirs"] for s in DOC_STRINGS.values()}
 PLACEHOLDERS = {s["placeholder"] for s in DOC_STRINGS.values()}
-ROOT_NOTES = {s["root_note"] for s in DOC_STRINGS.values()}
+# The line older versions wrote in the root document to point at the removed rules skill.
+# Kept only so that normalize_head can delete it from existing libraries.
+LEGACY_ROOT_NOTES = {
+    "This repository follows the rules of the `librarian-guide` skill.",
+    "이 저장소는 `librarian-guide` 스킬의 규칙을 따릅니다.",
+}
 SUBDIR_HEADER_CELLS = {s["subdir_header"][0] for s in DOC_STRINGS.values()}
 # Third header cell of the index: "Start" now, "Line" in indexes written before rows had
 # an end line
@@ -66,11 +66,18 @@ PARENT_RE = re.compile(
     "^(?:" + "|".join(re.escape(s["parent"].split("{doc}")[0]) for s in DOC_STRINGS.values())
     + r")\S+\s*$")
 
-SKILL_TARGETS = {
-    "claude": Path(".claude") / "skills",
-    "agents": Path(".agents") / "skills",
-    "codex": Path(".codex") / "skills",
-}
+# Older versions installed a rules skill: a source folder in the library, links to it in each
+# agent's skills folder, and .gitignore lines for those links. `update` removes the links and
+# lines, and only reports the source folder.
+LEGACY_SKILL_SOURCE = Path(CONFIG_DIR) / "skills" / "librarian-guide"
+LEGACY_SKILL_LINKS = [Path(agent) / "skills" / "librarian-guide"
+                      for agent in (".claude", ".agents", ".codex")]
+LEGACY_GITIGNORE_COMMENT = "# agent-librarian: skill links (restored automatically by check)"
+LEGACY_GITIGNORE_LINES = {f"/{link.as_posix()}" for link in LEGACY_SKILL_LINKS}
+# Config keys of removed features: maxEntries (index-row split warning), injectRules
+# (session-start rule injection), targets (rules skill link folders). Dropping them when the
+# config is read lets every command that rewrites the whole config (init, update) remove them.
+REMOVED_CONFIG_KEYS = ("maxEntries", "injectRules", "targets")
 DEFAULT_EXCLUDE = [
     "node_modules", "dist", "build", "out", "target", "vendor",
     "venv", "__pycache__", "coverage",
@@ -78,10 +85,8 @@ DEFAULT_EXCLUDE = [
 DEFAULT_CONFIG = {
     "language": "en",
     "docName": "CLAUDE.md",
-    "targets": ["claude", "agents", "codex"],
     "exclude": [],
     "maxDepth": 6,
-    "injectRules": True,
 }
 
 # ---------------------------------------------------------------- config / paths
@@ -142,16 +147,14 @@ def _read_config(path: Path) -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if path.is_file():
         cfg.update(json.loads(path.read_text(encoding="utf-8-sig")))  # tolerate a BOM
-    # maxEntries configured the index-row split warning, which no longer exists; dropping it
-    # here lets every command that rewrites the whole config (init, update) remove it
-    cfg.pop("maxEntries", None)
+    for key in REMOVED_CONFIG_KEYS:
+        cfg.pop(key, None)
     try:
         cfg["maxDepth"] = int(cfg["maxDepth"])
     except (TypeError, ValueError):
         cfg["maxDepth"] = DEFAULT_CONFIG["maxDepth"]
     if cfg["maxDepth"] < 1:
         cfg["maxDepth"] = DEFAULT_CONFIG["maxDepth"]
-    cfg["injectRules"] = _is_true(cfg["injectRules"], default=DEFAULT_CONFIG["injectRules"])
     return cfg
 
 
@@ -162,17 +165,12 @@ def _write_config(root: Path, cfg: dict) -> Path:
     return path
 
 
-def _is_true(value, default: bool = False) -> bool:
-    """Read a flag from a hand-edited config value or a hook payload value, where booleans
-    may arrive as strings ("false", "0", "off"). null or an unrecognized value gives default."""
+def _is_true(value) -> bool:
+    """Read a flag from a hook payload value, where booleans may arrive as strings
+    ("true", "1", "on"). null or an unrecognized value is False."""
     if isinstance(value, bool):
         return value
-    word = str(value).strip().lower()
-    if word in ("true", "1", "on", "yes"):
-        return True
-    if word in ("false", "0", "off", "no"):
-        return False
-    return default
+    return str(value).strip().lower() in ("true", "1", "on", "yes")
 
 
 def plugin_version() -> str | None:
@@ -398,24 +396,34 @@ def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, 
 
 def default_head(lib: Library, d: Path) -> list[str]:
     if d == lib.root:
-        return [f"# {lib.root.name}", "", lib.strings["root_note"]]
+        return [f"# {lib.root.name}"]
     return [lib.strings["parent"].format(doc=lib.primary_doc)]
 
 
 def normalize_head(lib: Library, d: Path, head: list[str]) -> list[str]:
-    """Rewrite the generated lines of the head (parent link, root note) in the current
-    language and doc name, keeping everything else the user wrote."""
-    if not head or not "".join(head).strip():
+    """Rewrite the generated lines of the head (parent link) in the current language and
+    doc name, and drop the old root note, keeping everything else the user wrote."""
+    if d == lib.root:
+        head = _without_legacy_root_note(head)
+        return head if "".join(head).strip() else default_head(lib, d)
+    if not "".join(head).strip():
         return default_head(lib, d)
-    out = []
-    for line in head:
-        stripped = line.strip()
-        if d != lib.root and PARENT_RE.match(stripped):
-            out.append(lib.strings["parent"].format(doc=lib.primary_doc))
-        elif d == lib.root and stripped in ROOT_NOTES:
-            out.append(lib.strings["root_note"])
-        else:
-            out.append(line)
+    return [lib.strings["parent"].format(doc=lib.primary_doc) if PARENT_RE.match(line.strip())
+            else line for line in head]
+
+
+def _without_legacy_root_note(head: list[str]) -> list[str]:
+    """Drop the old pointer line outside code fences, together with the blank line that
+    separated it from what follows."""
+    fenced = _fenced_lines(head)
+    note_rows = {k for k, line in enumerate(head)
+                 if k not in fenced and line.strip() in LEGACY_ROOT_NOTES}
+    out: list[str] = []
+    for k, line in enumerate(head):
+        is_blank_after_note = k - 1 in note_rows and not line.strip()
+        if k in note_rows or is_blank_after_note:
+            continue
+        out.append(line)
     return out
 
 
@@ -595,18 +603,7 @@ def changed_dirs(lib: Library) -> set[Path] | None:
     return paths
 
 
-# ---------------------------------------------------------------- skill links
-
-
-def _tree_files(root: Path) -> set[str]:
-    return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
-
-
-def _same_tree(a: Path, b: Path) -> bool:
-    if not a.is_dir() or not b.is_dir():
-        return False
-    fa = _tree_files(a)
-    return fa == _tree_files(b) and all((a / f).read_bytes() == (b / f).read_bytes() for f in fa)
+# ---------------------------------------------------------------- legacy rules skill
 
 
 def _is_link(p: Path) -> bool:
@@ -634,103 +631,79 @@ def _remove(p: Path) -> None:
         p.unlink()
 
 
-def _link_dir(src: Path, dest: Path) -> str:
-    """Link a directory, falling back to a copy. Returns the method used."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if os.name == "nt":
-        try:
-            import _winapi
-            _winapi.CreateJunction(str(src), str(dest))
-            return "junction"
-        except Exception:
-            pass
-    else:
-        try:
-            os.symlink(os.path.relpath(src, dest.parent), dest, target_is_directory=True)
-            return "symlink"
-        except OSError:
-            pass
-    shutil.copytree(src, dest)
-    return "copy"
-
-
-def skill_source(lib: Library) -> Path:
-    return lib.root / CONFIG_DIR / "skills" / GUIDE_SKILL
-
-
-_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(?:.*?\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
-
-
-def library_rules_text(lib: Library) -> str:
-    """The rules skill body without its frontmatter. The SKILL.md stays the single source
-    of the rule text, so the project's copy wins over the plugin template."""
-    skill = skill_source(lib) / "SKILL.md"
-    if not skill.is_file():
-        skill = TEMPLATE_DIR / "SKILL.md"
-    return _FRONTMATTER.sub("", skill.read_text(encoding="utf-8-sig"), count=1).strip()
-
-
-def _skill_diff(library_dir: Path, template_dir: Path) -> list[str]:
-    """Differences between the library's rules skill and the plugin's. Line endings are
-    ignored, because git's autocrlf changes them on ordinary installs."""
-    library_files, template_files = _tree_files(library_dir), _tree_files(template_dir)
-    lines: list[str] = []
-    for name in sorted(library_files | template_files):
-        if name not in template_files:
-            lines.append(f"{name}: only in library")
-            continue
-        if name not in library_files:
-            lines.append(f"{name}: only in plugin")
-            continue
-        current_lines = (_read(library_dir / name) or "").splitlines()
-        plugin_lines = (_read(template_dir / name) or "").splitlines()
-        lines.extend(difflib.unified_diff(current_lines, plugin_lines,
-                                          f"library/{name}", f"plugin/{name}", lineterm=""))
-    return lines
-
-
-def check_skills(lib: Library, fix: bool) -> Report:
+def remove_legacy_skill(lib: Library) -> Report:
+    """Remove the links and .gitignore lines of the rules skill older versions installed.
+    Anything that may hold the user's own text is left in place with a warning: the source
+    folder, and a copied link folder whose files differ from the source."""
     report = Report()
-    src = skill_source(lib)
-    if not src.is_dir():
-        if not fix:
-            report.drift.append(f"{lib.rel(src)} is missing")
-            return report
-        shutil.copytree(TEMPLATE_DIR, src)
-        report.created.append(lib.rel(src))
-    for target in lib.config.get("targets", []):
-        if target not in SKILL_TARGETS:
-            report.warnings.append(f"unknown skill target: {target}")
+    source = lib.root / LEGACY_SKILL_SOURCE
+    for link in LEGACY_SKILL_LINKS:
+        path = lib.root / link
+        if not os.path.lexists(path):
             continue
-        dest = lib.root / SKILL_TARGETS[target] / GUIDE_SKILL
-        ok = False
-        if _is_link(dest):
-            ok = dest.resolve() == src.resolve()
-        elif dest.is_dir():
-            ok = _same_tree(src, dest)
-        if ok:
+        if not _is_link(path) and not _same_text_files(path, source):
+            report.warnings.append(
+                f"{link.as_posix()} differs from {LEGACY_SKILL_SOURCE.as_posix()}, so it was "
+                "left in place. It is no longer used; delete it once you have kept what you need")
             continue
-        if not fix:
-            report.drift.append(f"{lib.rel(dest)} link is broken or content differs")
-            continue
-        if dest.exists() or _is_link(dest):
-            _remove(dest)
-        how = _link_dir(src, dest)
-        report.updated.append(f"{lib.rel(dest)} ({how})")
+        _remove(path)
+        report.updated.append(f"{link.as_posix()} (removed)")
+        _rmdir_if_empty(path.parent)
+        if path.parent.parent.name != ".claude":  # .claude also holds Claude Code settings
+            _rmdir_if_empty(path.parent.parent)
+    if _remove_legacy_gitignore_lines(lib):
+        report.updated.append(".gitignore (removed skill link entries)")
+    if source.exists():
+        report.warnings.append(
+            f"{LEGACY_SKILL_SOURCE.as_posix()} is no longer used and was left in place. "
+            "Move anything you still want from it into a folder document, then delete it")
     return report
 
 
-def _ensure_gitignore(lib: Library) -> None:
-    lines = [f"/{(SKILL_TARGETS[t] / GUIDE_SKILL).as_posix()}"
-             for t in lib.config.get("targets", []) if t in SKILL_TARGETS]
-    gi = lib.root / ".gitignore"
-    current = gi.read_text(encoding="utf-8").splitlines() if gi.is_file() else []
-    missing = [l for l in lines if l not in current]
-    if not missing:
-        return
-    comment = "# agent-librarian: skill links (restored automatically by check)"
-    block = ["", comment] if current else [comment]
-    gi.write_text("\n".join(current + block + missing) + "\n", encoding="utf-8", newline="\n")
+def _same_text_files(a: Path, b: Path) -> bool:
+    """Whether two folders hold the same files with the same text. Line endings are ignored,
+    because git's autocrlf changes them on ordinary checkouts."""
+    if not a.is_dir() or not b.is_dir():
+        return False
+    names_a = {p.relative_to(a) for p in a.rglob("*") if p.is_file()}
+    names_b = {p.relative_to(b) for p in b.rglob("*") if p.is_file()}
+    return names_a == names_b and all(
+        (a / name).read_bytes().replace(b"\r\n", b"\n")
+        == (b / name).read_bytes().replace(b"\r\n", b"\n") for name in names_a)
+
+
+def _rmdir_if_empty(path: Path) -> None:
+    if path.is_dir() and not _is_link(path) and not any(path.iterdir()):
+        path.rmdir()
+
+
+def _remove_legacy_gitignore_lines(lib: Library) -> bool:
+    """Drop the .gitignore lines older versions added for the skill links, keeping the file's
+    BOM and line ending style. Returns whether the file changed."""
+    gitignore = lib.root / ".gitignore"
+    if not gitignore.is_file():
+        return False
+    raw = gitignore.read_bytes()
+    bom = b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b""
+    text = raw[len(bom):].decode("utf-8")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines()
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped == LEGACY_GITIGNORE_COMMENT:
+            if kept and not kept[-1].strip():
+                kept.pop()  # the blank line that was added to separate the block
+            continue
+        if stripped not in LEGACY_GITIGNORE_LINES:
+            kept.append(line)
+    if kept == lines:
+        return False
+    if any(line.strip() for line in kept):
+        gitignore.write_bytes(bom + (newline.join(kept) + newline).encode("utf-8"))
+    else:
+        gitignore.unlink()  # the file held nothing but the plugin's lines
+    return True
 
 
 # ---------------------------------------------------------------- hooks
@@ -816,9 +789,7 @@ def hook_stop(payload: dict) -> None:
     if lib is None:
         _emit({})
         return
-    report = check_skills(lib, fix=True)
-    changed = changed_dirs(lib)
-    report.merge(sync_dirs(lib, changed, fix=True))
+    report = sync_dirs(lib, changed_dirs(lib), fix=True)
     out: dict = {}
     notices = list(report.warnings)
     version_notice = _version_notice(lib.config.get("libraryVersion"), plugin_version())
@@ -835,16 +806,6 @@ def hook_stop(payload: dict) -> None:
             f"Read the code and fill them in, in the library language ({lib.language}). "
             "Do not describe functions or files, and do not edit the index marker block.")
     _emit(out)
-
-
-def hook_session_start(payload: dict) -> None:
-    cwd = Path(payload.get("cwd") or os.getcwd())
-    lib = load_library(cwd)
-    if lib is None or not lib.config["injectRules"]:
-        return
-    context = f"{library_rules_text(lib)}\n\nLibrary language: {lib.language}, folder document: {lib.primary_doc}"
-    _emit({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                  "additionalContext": context}})
 
 
 # ---------------------------------------------------------------- CLI
@@ -873,21 +834,14 @@ def cmd_init(args) -> None:
         cfg["docName"] = args.doc
     if args.language:
         cfg["language"] = args.language
-    if args.targets is not None:
-        cfg["targets"] = [t for t in args.targets.split(",") if t]
     if args.exclude:
         cfg["exclude"] = sorted(set(cfg.get("exclude", [])) | set(args.exclude))
     cfg["libraryVersion"] = plugin_version()
     _write_config(root, cfg)
-    lib = Library(root=root, config=cfg)
-    report = check_skills(lib, fix=True)
-    _ensure_gitignore(lib)
-    print(f"[config] {lib.rel(cfg_path)}")
-    _print_report(report)
-
-
-def cmd_sync_skills(args) -> None:
-    _print_report(check_skills(_require(Path(args.root)), fix=True))
+    print(f"[config] {cfg_path.relative_to(root).as_posix()}")
+    # a library rebuilt with init gets the new version stamp, so the Stop hook no longer
+    # asks for /update-library; the old rules skill is cleaned up here as well
+    _print_report(remove_legacy_skill(Library(root=root, config=cfg)))
 
 
 def cmd_scaffold(args) -> None:
@@ -914,9 +868,8 @@ def cmd_index(args) -> None:
 
 def cmd_check(args) -> None:
     lib = _require(Path(args.root))
-    report = check_skills(lib, fix=args.fix)
     targets = changed_dirs(lib) if args.changed else None
-    report.merge(sync_dirs(lib, targets, fix=args.fix))
+    report = sync_dirs(lib, targets, fix=args.fix)
     _print_report(report)
     if report.drift or report.pending:
         sys.exit(1)
@@ -929,53 +882,17 @@ def cmd_pending(args) -> None:
         print(rel)
 
 
-def cmd_rules(args) -> None:
-    lib = _require(Path(args.root))
-    inject = lib.config["injectRules"]
-    if args.state != "status":
-        # change only this key so the file does not gain every default value
-        raw = json.loads(_read(lib.root / CONFIG_DIR / CONFIG_FILE) or "{}")
-        inject = args.state == "on"
-        raw["injectRules"] = inject
-        _write_config(lib.root, raw)
-    print(f"[rules] {'on' if inject else 'off'}")
-
-
-def _replace_with_template(src: Path) -> None:
-    """Swap src for a fresh template copy. The new copy is complete before the old one is
-    moved away, so a failure never leaves the skill folder missing."""
-    staged = src.with_name(f"{src.name}.new")
-    backup = src.with_name(f"{src.name}.bak")
-    for leftover in (staged, backup):
-        _remove(leftover)
-    shutil.copytree(TEMPLATE_DIR, staged)
-    src.rename(backup)
-    staged.rename(src)
-    _remove(backup)
-
-
 def cmd_update(args) -> None:
     lib = _require(Path(args.root))
-    # migration: unlike `rules`, this intentionally writes the full config, so keys added
-    # in newer versions (filled with defaults by _read_config) appear in the file
+    report = remove_legacy_skill(lib)
+    report.merge(sync_dirs(lib, None, fix=True))
+
+    # migration: this intentionally writes the full config, so keys added in newer versions
+    # (filled with defaults by _read_config) appear in the file. It runs last so that a
+    # failure above keeps the old version, and the Stop hook keeps asking for the update.
     lib.config["libraryVersion"] = plugin_version()
     cfg_path = _write_config(lib.root, lib.config)
     print(f"[config] {lib.rel(cfg_path)}")
-
-    report = Report()
-    src = skill_source(lib)
-    skill_diff = _skill_diff(src, TEMPLATE_DIR) if src.is_dir() else []
-    if skill_diff:
-        if args.replace_skill:
-            _replace_with_template(src)
-            report.updated.append(lib.rel(src))
-        else:  # the user may have edited the rules; show the diff and let them decide
-            for line in skill_diff:
-                print(f"[skill-diff] {line}")
-
-    report.merge(check_skills(lib, fix=True))
-    _ensure_gitignore(lib)
-    report.merge(sync_dirs(lib, None, fix=True))
     _print_report(report)
 
 
@@ -988,8 +905,6 @@ def cmd_hook(args) -> None:
     try:
         if args.event == "post-edit":
             hook_post_edit(payload)
-        elif args.event == "session-start":
-            hook_session_start(payload)
         else:
             hook_stop(payload)
     except Exception as exc:  # hooks never block the editing flow
@@ -1009,11 +924,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--language", help="library language, e.g. en, ko (default: en)")
     p.add_argument("--doc", choices=["CLAUDE.md", "AGENTS.md", "both"],
                    help="folder document name (default: keep the current one, else CLAUDE.md)")
-    p.add_argument("--targets", help="comma-separated: claude,agents,codex")
     p.add_argument("--exclude", nargs="*", default=[])
     p.set_defaults(func=cmd_init)
 
-    sub.add_parser("sync-skills").set_defaults(func=cmd_sync_skills)
     sub.add_parser("scaffold").set_defaults(func=cmd_scaffold)
 
     p = sub.add_parser("index")
@@ -1028,17 +941,10 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("pending").set_defaults(func=cmd_pending)
 
-    p = sub.add_parser("rules")
-    p.add_argument("state", choices=["on", "off", "status"])
-    p.set_defaults(func=cmd_rules)
-
-    p = sub.add_parser("update")
-    p.add_argument("--replace-skill", action="store_true",
-                   help="replace the library's rules skill with the plugin template")
-    p.set_defaults(func=cmd_update)
+    sub.add_parser("update").set_defaults(func=cmd_update)
 
     p = sub.add_parser("hook")
-    p.add_argument("event", choices=["post-edit", "stop", "session-start"])
+    p.add_argument("event", choices=["post-edit", "stop"])
     p.set_defaults(func=cmd_hook)
 
     args = parser.parse_args(argv)
