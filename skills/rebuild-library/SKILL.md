@@ -45,6 +45,6 @@ python <plugin>/scripts/librarian.py check
 Report to the user:
 - How many documents were created
 - Any remaining `role needed` entries
-- Any split recommendations (`warning`). Do not restructure folders; only suggest it to the user.
+- Any folder depth warnings (`warning`). Do not restructure folders; only suggest it to the user.
 
 Then give the same wrap-up as step 5 of build-library.

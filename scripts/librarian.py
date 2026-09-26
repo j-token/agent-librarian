@@ -77,7 +77,6 @@ DEFAULT_CONFIG = {
     "docName": "CLAUDE.md",
     "targets": ["claude", "agents", "codex"],
     "exclude": [],
-    "maxEntries": 60,
     "maxDepth": 6,
     "injectRules": True,
 }
@@ -140,13 +139,15 @@ def _read_config(path: Path) -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if path.is_file():
         cfg.update(json.loads(path.read_text(encoding="utf-8-sig")))  # tolerate a BOM
-    for key in ("maxEntries", "maxDepth"):
-        try:
-            cfg[key] = int(cfg[key])
-        except (TypeError, ValueError):
-            cfg[key] = DEFAULT_CONFIG[key]
-        if cfg[key] < 1:
-            cfg[key] = DEFAULT_CONFIG[key]
+    # maxEntries configured the index-row split warning, which no longer exists; dropping it
+    # here lets every command that rewrites the whole config (init, update) remove it
+    cfg.pop("maxEntries", None)
+    try:
+        cfg["maxDepth"] = int(cfg["maxDepth"])
+    except (TypeError, ValueError):
+        cfg["maxDepth"] = DEFAULT_CONFIG["maxDepth"]
+    if cfg["maxDepth"] < 1:
+        cfg["maxDepth"] = DEFAULT_CONFIG["maxDepth"]
     cfg["injectRules"] = _is_true(cfg["injectRules"], default=DEFAULT_CONFIG["injectRules"])
     return cfg
 
@@ -514,10 +515,6 @@ def sync_dir(lib: Library, d: Path, files: list[Path], children: list[Path], fix
     if depth > lib.config["maxDepth"]:
         report.warnings.append(
             f"{rel}: folder depth {depth} > {lib.config['maxDepth']} (consider restructuring)")
-    if len(index_rows) > lib.config["maxEntries"]:
-        report.warnings.append(
-            f"{rel}: {len(index_rows)} index rows > {lib.config['maxEntries']} "
-            "(consider splitting into subfolders)")
     return report
 
 

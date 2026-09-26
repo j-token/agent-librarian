@@ -241,14 +241,16 @@ def test_hook_stop_after_folder_changes(project):
     assert "decision" not in again
 
 
-def test_hook_stop_warns_on_size(project):
+def test_hook_stop_warns_on_deep_folders_only(project):
     init(project)
-    cfg_path = project / ".librarian/config.json"
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg["maxEntries"] = 2
-    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    cfg = read_config(project)
+    cfg["maxDepth"] = 1
+    cfg["maxEntries"] = 1  # a legacy key: many index rows no longer cause a warning
+    write_config(project, cfg)
     out = json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": True}))
-    assert "src/auth" in out["systemMessage"]
+    assert "src/auth: folder depth 2 > 1" in out["systemMessage"]
+    assert "index rows" not in out["systemMessage"]
+    assert "native" not in out["systemMessage"]
 
 
 # ---------------------------------------------------------------- skill links
@@ -516,11 +518,10 @@ def test_parse_failure_without_previous_rows_lists_file(project):
 
 def test_negative_limits_fall_back(project):
     init(project)
-    cfg_path = project / ".librarian/config.json"
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg["maxEntries"] = -5
-    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
-    assert lb.load_library(project).config["maxEntries"] == lb.DEFAULT_CONFIG["maxEntries"]
+    cfg = read_config(project)
+    cfg["maxDepth"] = -5
+    write_config(project, cfg)
+    assert lb.load_library(project).config["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
 
 
 # ---------------------------------------------------------------- session-start rules
@@ -641,6 +642,16 @@ def test_update_fills_missing_keys_and_records_version(project):
     assert cfg["libraryVersion"] == lb.plugin_version()
     assert cfg["injectRules"] is True
     assert cfg["targets"] == lb.DEFAULT_CONFIG["targets"]
+
+
+@pytest.mark.parametrize("command", ["update", "init"])
+def test_rewriting_config_drops_legacy_max_entries(project, command):
+    init(project)
+    write_config(project, {"language": "en", "maxEntries": 60, "maxDepth": 4})
+    run(project, command)
+    cfg = read_config(project)
+    assert "maxEntries" not in cfg
+    assert cfg["maxDepth"] == 4
 
 
 def test_update_shows_diff_for_edited_rules_and_keeps_them(project, capsys):

@@ -22,4 +22,4 @@ The library language is set in `.librarian/config.json` (`language`). Write ever
 3. When you create a folder, fill in the role section of its document and the role cell for it in the parent document's subfolder table.
 4. Do not record who uses a function (reverse references). Look them up with grep or LSP instead.
 5. Each piece of information lives in exactly one document. Do not repeat what a parent document says in a child document, and do not pull a child's details up into the parent.
-6. If a hook or check recommends a split (too many index rows, folders nested too deep), tell the user. Do not restructure folders on your own.
+6. If a hook or check warns that folders are nested too deep, tell the user. Do not restructure folders on your own.

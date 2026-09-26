@@ -49,7 +49,7 @@ The first thing the install commands ask is the **library language**: the langua
 Installing the library adds the following to your project:
 
 ```
-.librarian/config.json                  # library language, document name, excluded paths, split thresholds (maxEntries, maxDepth),
+.librarian/config.json                  # library language, document name, excluded paths, folder depth warning threshold (maxDepth),
                                         # rule injection at session start (injectRules), plugin version the library was built with (libraryVersion)
 .librarian/skills/librarian-guide/      # the management-rules skill (source)
 .claude/skills/librarian-guide          → linked to the source (Claude Code)
@@ -160,7 +160,7 @@ A project has a library if `.librarian/config.json` exists at its root. The `lib
 - When you create a folder, fill in its role section and its role cell in the parent's subfolder table, in the library language (`language` in `.librarian/config.json`).
 - If the stop hook asks you to fill in empty roles, read the code and fill them in. Write about the folder's role only.
 - Look up reverse references (who calls what) with grep or LSP. They are not recorded in the documents.
-- If a hook recommends a split (too many index rows, folders nested too deep), tell the user. Do not restructure folders on your own.
+- If a hook warns that folders are nested too deep, tell the user. Do not restructure folders on your own.
 - If the stop hook says the library was built with an older plugin version, ask the user to run `/update-library`. It cannot be invoked by a model.
 
 ## Contributing
