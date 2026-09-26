@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','post-edit'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','post-edit'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','stop'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','stop'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
