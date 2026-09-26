@@ -1,13 +1,16 @@
 """Dependency-free symbol extractor for agent-librarian.
 
-extract_symbols(path) returns [(name, line)] with 1-based lines, where the line is the line
-that holds the declaration's name. Methods are prefixed with their container ("Class.method").
+extract_symbols(path) returns [(name, start_line, end_line)] with 1-based, inclusive lines.
+The start line is the line that holds the declaration's name; the end line is the last line
+of the declaration. Methods are prefixed with their container ("Class.method").
 
-- Python uses the standard `ast` module.
+- Python uses the standard `ast` module (end line: the node's end_lineno).
 - Brace languages (JS/TS, Go, Rust, Java, C#, C, C++) use a small scanner: comments and
   string literals are blanked out (newlines kept, so offsets and lines stay valid), the
   remaining text is tokenized, and declarations are recognized statement by statement
-  while a scope stack tracks braces.
+  while a scope stack tracks braces. A declaration with a body ends at the line of the `}`
+  that closes it (the last line of the file when it is never closed); a declaration without
+  a body ends at its terminating `;`, or at its last token when nothing terminates it.
 """
 from __future__ import annotations
 
@@ -40,14 +43,14 @@ def language_of(path: Path, text: str) -> str | None:
     return lang
 
 
-def extract_symbols(path: Path) -> list[tuple[str, int]]:
+def extract_symbols(path: Path) -> list[tuple[str, int, int]]:
     if path.suffix.lower() not in EXT_LANG:
         return []
     text = path.read_text(encoding="utf-8-sig", errors="replace")
     return extract_text(text, language_of(path, text))
 
 
-def extract_text(text: str, lang: str) -> list[tuple[str, int]]:
+def extract_text(text: str, lang: str) -> list[tuple[str, int, int]]:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     if text.startswith("\ufeff"):
         text = text[1:]
@@ -99,7 +102,7 @@ def _first_branch_only(text: str, lang: str) -> str:
 # ---------------------------------------------------------------- Python
 
 
-def _python(text: str) -> list[tuple[str, int]]:
+def _python(text: str) -> list[tuple[str, int, int]]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -107,7 +110,7 @@ def _python(text: str) -> list[tuple[str, int]]:
     except (RecursionError, MemoryError) as exc:
         raise SyntaxError(f"too deeply nested to parse ({type(exc).__name__})") from None
     lines = text.split("\n")
-    out: list[tuple[str, int]] = []
+    out: list[tuple[str, int, int]] = []
 
     def name_line(node) -> int:
         # `def \` + newline + `name():` puts the name on a later line
@@ -120,9 +123,9 @@ def _python(text: str) -> list[tuple[str, int]]:
     def visit(body, scope: list[str]) -> None:
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                out.append((".".join(scope + [node.name]), name_line(node)))
+                out.append((".".join(scope + [node.name]), name_line(node), node.end_lineno))
             elif isinstance(node, ast.ClassDef):
-                out.append((".".join(scope + [node.name]), name_line(node)))
+                out.append((".".join(scope + [node.name]), name_line(node), node.end_lineno))
                 visit(node.body, scope + [node.name])
             else:
                 # descend into if/try/with/for/while/match blocks in source order,
@@ -524,15 +527,17 @@ def _is_ident(s: str) -> bool:
 
 
 class _Scope:
-    __slots__ = ("kind", "name", "ctype", "nest", "saved", "eff", "prefix", "cont")
+    __slots__ = ("kind", "name", "ctype", "nest", "saved", "symbol_index", "eff", "prefix",
+                 "cont")
 
     def __init__(self, kind: str, parent: "_Scope | None" = None, name: str | None = None,
-                 ctype: str = "", saved=None):
+                 ctype: str = "", saved=None, symbol_index: int | None = None):
         self.kind = kind          # file, container, transparent, func, opaque, inline, gotypes, jsobject
         self.name = name
         self.ctype = ctype        # e.g. class, trait, impl
         self.nest = 0
         self.saved = saved        # inline: (header, paren depth) to restore on close
+        self.symbol_index = symbol_index  # position in the output of the symbol owning this body
         # cached so that lookups stay O(1) however deep the nesting is
         self.eff = parent.eff if kind == "transparent" and parent else kind
         base = parent.prefix if parent else ()
@@ -696,7 +701,7 @@ class _Scanner:
         self.comments = masker.comments
         self.comment_starts = [a for a, _ in masker.comments]
         self.line_starts = [0] + [m.end() for m in re.finditer("\n", self.masked)]
-        self.out: list[tuple[str, int]] = []
+        self.out: list[tuple[str, int, int]] = []
         self.stack = [_Scope("file")]
 
     # -- helpers
@@ -724,15 +729,28 @@ class _Scanner:
     def push(self, kind: str, **kw) -> None:
         self.stack.append(_Scope(kind, self.stack[-1], **kw))
 
-    def emit(self, name: str, line: int) -> None:
-        self.out.append((".".join(self.stack[-1].prefix + (name,)), line))
+    def emit(self, name: str, line: int, end_line: int) -> int:
+        """Record a symbol and return its position in the output."""
+        self.out.append((".".join(self.stack[-1].prefix + (name,)), line, end_line))
+        return len(self.out) - 1
+
+    def close(self, scope: _Scope, end_line: int) -> None:
+        """A body has closed: its symbol, if it has one, ends on end_line."""
+        if scope.symbol_index is not None:
+            name, line, _ = self.out[scope.symbol_index]
+            self.out[scope.symbol_index] = (name, line, end_line)
+
+    def pop_scope(self, end_line: int) -> None:
+        """Leave the innermost scope; every pop goes through here so no symbol keeps its
+        placeholder end line."""
+        self.close(self.stack.pop(), end_line)
 
     def container(self):
         return self.stack[-1].cont
 
     # -- main loop
 
-    def run(self) -> list[tuple[str, int]]:
+    def run(self) -> list[tuple[str, int, int]]:
         header: list = []
         pdepth = 0
         prev_line = 0
@@ -746,7 +764,7 @@ class _Scanner:
                     top.nest += 1
                 elif s == "}":
                     if top.nest == 0:
-                        self.stack.pop()
+                        self.pop_scope(tok[LN])
                         if top.kind == "inline":
                             header, pdepth = top.saved
                             header.append(("{}", tok[LN], tok[ST], tok[EN]))
@@ -765,7 +783,7 @@ class _Scanner:
 
             if top.kind == "gotypes" and s == ")" and pdepth == 0:
                 self.bodiless(header)
-                self.stack.pop()
+                self.pop_scope(tok[LN])
                 header = []
                 continue
             if (self.lang == "go" and s == "(" and top.kind == "file"
@@ -784,9 +802,9 @@ class _Scanner:
                 self.bodiless(header)
                 header, pdepth = [], 0
                 if len(self.stack) > 1:
-                    self.stack.pop()
+                    self.pop_scope(tok[LN])
             elif s == ";" and pdepth == 0:
-                self.bodiless(header)
+                self.bodiless(header, tok[LN])
                 header = []
             elif s == "," and pdepth == 0 and top.kind == "jsobject":
                 header = []
@@ -798,6 +816,9 @@ class _Scanner:
                     pdepth = max(0, pdepth - 1)
         if header and self.stack[-1].kind not in ("func", "opaque", "inline"):
             self.bodiless(header)
+        last_line = self.src.rstrip().count("\n") + 1
+        for scope in self.stack:  # bodies never closed run to the end of the file
+            self.close(scope, last_line)
         return self.out
 
     # -- boundaries
@@ -882,23 +903,28 @@ class _Scanner:
     def open_block(self, header) -> None:
         act = getattr(self, "open_" + self.lang_family())(header)
         kind = act[0] if act else "opaque"
+        symbol_index = None
         if kind in ("container", "func", "leaf"):
-            self.emit(act[1], act[2])
+            # the end line is a placeholder until the body's scope is popped
+            symbol_index = self.emit(act[1], act[2], act[2])
         if kind == "container":
-            self.push("container", name=act[1], ctype=act[3] if len(act) > 3 else "")
+            self.push("container", name=act[1], ctype=act[3] if len(act) > 3 else "",
+                      symbol_index=symbol_index)
         elif kind == "func":
-            self.push("func")
+            self.push("func", symbol_index=symbol_index)
         elif kind in ("transparent", "jsobject"):
             self.push(kind)
         else:
-            self.push("opaque")
+            self.push("opaque", symbol_index=symbol_index)  # leaf bodies are opaque
 
-    def bodiless(self, header) -> None:
+    def bodiless(self, header, end_line: int | None = None) -> None:
+        """A declaration without a body; it ends on end_line (its terminating `;`) or, when
+        nothing terminates it, on the line of its last token."""
         if not header:
             return
         act = getattr(self, "end_" + self.lang_family())(header)
         if act:
-            self.emit(act[0], act[1])
+            self.emit(act[0], act[1], header[-1][LN] if end_line is None else end_line)
 
     def lang_family(self) -> str:
         return "js" if self.lang in JS_LANGS else ("c" if self.lang in ("c", "cpp") else self.lang)

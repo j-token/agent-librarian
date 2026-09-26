@@ -44,7 +44,8 @@ def main() -> None:
             if args.lang and lang != args.lang:
                 continue
             try:
-                ours = extract.extract_symbols(f)
+                # the oracle has start lines only, so compare (name, start line)
+                ours = [(name, start) for name, start, _ in extract.extract_symbols(f)]
             except Exception as exc:  # built-in extractor must never raise except Python syntax
                 stats[lang]["errors"] += 1
                 examples[lang].append(f"ERROR {f}: {exc!r}")

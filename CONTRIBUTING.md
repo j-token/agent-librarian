@@ -34,7 +34,7 @@ claude --plugin-dir /path/to/agent-librarian
 
 These rules are the core of the project. Changes that break them will not be accepted.
 
-- **Generated documents never describe what a function or file does.** The index lists only file, function and line. Describing behavior invites wrong descriptions (hallucination).
+- **Generated documents never describe what a function or file does.** The index lists only file, function, start line and end line. Describing behavior invites wrong descriptions (hallucination).
 - **Only the script writes the index block.** Nothing else may edit the content between `<!-- librarian:index:start -->` and `<!-- librarian:index:end -->`.
 - **Roles written by people or agents are never lost.** Any change to document generation must keep existing role text.
 

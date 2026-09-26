@@ -93,13 +93,13 @@ def hook(event, payload):
 
 
 @pytest.mark.parametrize("rel,expected", [
-    ("src/auth/auth.py", [("Session", 3), ("Session.refresh", 4), ("login", 9)]),
-    ("src/api/svc.ts", [("Svc", 1), ("Svc.run", 2), ("handler", 4)]),
-    ("web/main.go", [("S", 3), ("S.Do", 5), ("Top", 7)]),
-    ("native/lib.cpp", [("C", 2), ("C::m", 3), ("make", 5)]),
-    ("native/lib.rs", [("P", 1), ("P", 2), ("P.new", 3), ("main", 5)]),
-    ("native/J.java", [("J", 1), ("J.J", 2), ("J.run", 3)]),
-    ("native/K.cs", [("K", 2), ("K.M", 3)]),
+    ("src/auth/auth.py", [("Session", 3, 6), ("Session.refresh", 4, 6), ("login", 9, 10)]),
+    ("src/api/svc.ts", [("Svc", 1, 3), ("Svc.run", 2, 2), ("handler", 4, 4)]),
+    ("web/main.go", [("S", 3, 3), ("S.Do", 5, 5), ("Top", 7, 7)]),
+    ("native/lib.cpp", [("C", 2, 2), ("C::m", 3, 3), ("make", 5, 5)]),
+    ("native/lib.rs", [("P", 1, 1), ("P", 2, 4), ("P.new", 3, 3), ("main", 5, 5)]),
+    ("native/J.java", [("J", 1, 4), ("J.J", 2, 2), ("J.run", 3, 3)]),
+    ("native/K.cs", [("K", 2, 4), ("K.M", 3, 3)]),
 ])
 def test_extract_symbols(project, rel, expected):
     assert lb.extract_symbols(project / rel) == expected
@@ -119,7 +119,8 @@ def test_scaffold_creates_hierarchy(project):
     sub = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
     assert sub.startswith("# Parent: ../CLAUDE.md")
     assert index_rows(project / "src/auth/CLAUDE.md") == [
-        ("auth.py", "Session", "3"), ("auth.py", "Session.refresh", "4"), ("auth.py", "login", "9")]
+        ("auth.py", "Session", "3", "6"), ("auth.py", "Session.refresh", "4", "6"),
+        ("auth.py", "login", "9", "10")]
     assert lb.INDEX_START not in (project / "assets/CLAUDE.md").read_text(encoding="utf-8")
 
 
@@ -141,7 +142,7 @@ def test_index_preserves_human_text(project):
     run(project, "index", str(project / "src/auth"))
     out = doc.read_text(encoding="utf-8")
     assert "Auth module.\n\n- detail" in out and "section written by a human" in out
-    assert ("auth.py", "Session", "5") in index_rows(doc)
+    assert ("auth.py", "Session", "5", "8") in index_rows(doc)
     run(project, "index", str(project / "src/auth"))
     assert doc.read_text(encoding="utf-8") == out  # idempotent
 
@@ -177,7 +178,7 @@ def test_hook_post_edit_claude(project):
     out = hook("post-edit", {"cwd": str(project), "tool_name": "Edit",
                              "tool_input": {"file_path": str(src)}})
     assert out == ""
-    assert ("auth.py", "Session", "5") in index_rows(project / "src/auth/CLAUDE.md")
+    assert ("auth.py", "Session", "5", "8") in index_rows(project / "src/auth/CLAUDE.md")
 
 
 def test_hook_post_edit_codex_patch(project):
@@ -192,9 +193,9 @@ def test_hook_post_edit_codex_patch(project):
                              "tool_input": {"command": patch}})
     ctx = json.loads(out)["hookSpecificOutput"]
     assert ctx["hookEventName"] == "PostToolUse" and "src/db" in ctx["additionalContext"]
-    assert index_rows(project / "src/db/CLAUDE.md") == [("conn.py", "connect", "1")]
+    assert index_rows(project / "src/db/CLAUDE.md") == [("conn.py", "connect", "1", "2")]
     assert "| db/ |" in (project / "src/CLAUDE.md").read_text(encoding="utf-8")
-    assert index_rows(project / "web/CLAUDE.md") == [("new.go", "N", "3")]
+    assert index_rows(project / "web/CLAUDE.md") == [("new.go", "N", "3", "3")]
 
 
 def test_hook_ignores_unmanaged_project(tmp_path):
@@ -308,7 +309,7 @@ def test_default_language_is_english(project):
     init(project)
     assert json.loads((project / ".librarian/config.json").read_text(encoding="utf-8"))["language"] == "en"
     text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
-    assert EN["role"] in text and "| File | Function | Line |" in text
+    assert EN["role"] in text and "| File | Function | Start | End |" in text
     assert "| Folder | Role |" in (project / "src/CLAUDE.md").read_text(encoding="utf-8")
 
 
@@ -316,7 +317,7 @@ def test_korean_library(project):
     init(project, language="ko")
     text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# 상위 문서: ../CLAUDE.md")
-    assert KO["role"] in text and KO["placeholder"] in text and "| 파일 | 함수 | 줄 |" in text
+    assert KO["role"] in text and KO["placeholder"] in text and "| 파일 | 함수 | 시작 줄 | 끝 줄 |" in text
     assert KO["root_note"] in (project / "CLAUDE.md").read_text(encoding="utf-8")
     assert "src/auth" in [r for r in lb.sync_dirs(lb.load_library(project), None, False).pending]
 
@@ -363,7 +364,7 @@ def test_unmatched_or_fenced_marker_keeps_human_text(project):
     run(project, "index", str(project / "src/auth"))
     out = doc.read_text(encoding="utf-8")
     assert fenced in out
-    assert ("auth.py", "login", "9") in index_rows(doc)
+    assert ("auth.py", "login", "9", "10") in index_rows(doc)
 
     # a start marker without an end marker is treated as text, not as the index
     broken = out.replace(lb.INDEX_END, "") + "\n## Notes\n\nkeep me\n"
@@ -445,7 +446,7 @@ def test_config_with_bom(project):
     src = project / "src/auth/auth.py"
     src.write_text("\n" + src.read_text(encoding="utf-8"), encoding="utf-8")
     hook("post-edit", {"cwd": str(project), "tool_input": {"file_path": str(src)}})
-    assert ("auth.py", "Session", "4") in index_rows(project / "src/auth/CLAUDE.md")
+    assert ("auth.py", "Session", "4", "7") in index_rows(project / "src/auth/CLAUDE.md")
 
 
 def test_stop_hook_active_string_false(project):
@@ -458,7 +459,23 @@ def test_parse_failure_keeps_previous_rows(project):
     init(project)
     (project / "src/auth/auth.py").write_text("def broken(:\n", encoding="utf-8")
     run(project, "index", str(project / "src/auth"))
-    assert ("auth.py", "login", "9") in index_rows(project / "src/auth/CLAUDE.md")
+    assert ("auth.py", "login", "9", "10") in index_rows(project / "src/auth/CLAUDE.md")
+
+
+def test_parse_failure_keeps_legacy_three_column_rows(project):
+    init(project)
+    doc = project / "src/auth/CLAUDE.md"
+    text = doc.read_text(encoding="utf-8")
+    new_block = text[text.index(lb.INDEX_START):text.index(lb.INDEX_END)]
+    legacy_block = (f"{lb.INDEX_START}\n| File | Function | Line |\n|---|---|---|\n"
+                    "| auth.py | Session | 3 |\n| auth.py | login | 9 |\n")
+    doc.write_text(text.replace(new_block, legacy_block), encoding="utf-8")
+    (project / "src/auth/auth.py").write_text("def broken(:\n", encoding="utf-8")
+
+    run(project, "index", str(project / "src/auth"))
+
+    assert index_rows(doc) == [("auth.py", "Session", "3", "-"), ("auth.py", "login", "9", "-")]
+    assert "| File | Function | Start | End |" in doc.read_text(encoding="utf-8")
 
 
 def test_invalid_config_numbers_fall_back(project):
@@ -513,7 +530,7 @@ def test_parse_failure_without_previous_rows_lists_file(project):
     init(project)
     (project / "src/auth/new.py").write_text("def broken(:\n", encoding="utf-8")
     run(project, "index", str(project / "src/auth"))
-    assert ("new.py", "-", "-") in index_rows(project / "src/auth/CLAUDE.md")
+    assert ("new.py", "-", "-", "-") in index_rows(project / "src/auth/CLAUDE.md")
 
 
 def test_negative_limits_fall_back(project):

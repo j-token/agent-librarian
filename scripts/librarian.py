@@ -3,7 +3,7 @@
 
 Each document separates the part written by humans/LLMs (folder role, subfolder table) from
 the part written by this script (the index marker block). The index records only
-file · function · line and never describes what a function does.
+file · function · start line · end line and never describes what a function does.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ DOC_STRINGS = {
         "subdirs": "## Subfolders",
         "placeholder": "_(to be written)_",
         "subdir_header": ("Folder", "Role"),
-        "index_header": ("File", "Function", "Line"),
+        "index_header": ("File", "Function", "Start", "End"),
     },
     "ko": {
         "parent": "# 상위 문서: ../{doc}",
@@ -51,7 +51,7 @@ DOC_STRINGS = {
         "subdirs": "## 하위 폴더",
         "placeholder": "_(작성 필요)_",
         "subdir_header": ("폴더", "역할"),
-        "index_header": ("파일", "함수", "줄"),
+        "index_header": ("파일", "함수", "시작 줄", "끝 줄"),
     },
 }
 ROLE_HEADINGS = {s["role"] for s in DOC_STRINGS.values()}
@@ -59,6 +59,9 @@ SUBDIR_HEADINGS = {s["subdirs"] for s in DOC_STRINGS.values()}
 PLACEHOLDERS = {s["placeholder"] for s in DOC_STRINGS.values()}
 ROOT_NOTES = {s["root_note"] for s in DOC_STRINGS.values()}
 SUBDIR_HEADER_CELLS = {s["subdir_header"][0] for s in DOC_STRINGS.values()}
+# Third header cell of the index: "Start" now, "Line" in indexes written before rows had
+# an end line
+INDEX_LINE_HEADER_CELLS = {s["index_header"][2] for s in DOC_STRINGS.values()} | {"Line", "줄"}
 PARENT_RE = re.compile(
     "^(?:" + "|".join(re.escape(s["parent"].split("{doc}")[0]) for s in DOC_STRINGS.values())
     + r")\S+\s*$")
@@ -319,16 +322,21 @@ def _fenced_lines(lines: list[str]) -> set[int]:
     return fenced
 
 
-def _parse_index_rows(lines: list[str] | None) -> dict[str, list[tuple[str, str, str]]]:
-    """Previous index rows by file name (kept when a file fails to parse)."""
-    rows: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+def _parse_index_rows(lines: list[str] | None) -> dict[str, list[tuple[str, str, str, str]]]:
+    """Previous index rows by file name (kept when a file fails to parse).
+
+    Rows from an index written before rows had an end line have three cells; their end
+    line is unknown and becomes "-"."""
+    rows: dict[str, list[tuple[str, str, str, str]]] = defaultdict(list)
     for line in lines or []:
         s_ = line.strip()
         if not s_.startswith("|") or set(s_) <= set("|-: "):
             continue
         cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", s_)[1:-1]]
-        if len(cells) == 3 and cells[2] not in {h["index_header"][2] for h in DOC_STRINGS.values()}:
-            rows[cells[0]].append((cells[0], cells[1], cells[2]))
+        if len(cells) not in (3, 4) or cells[2] in INDEX_LINE_HEADER_CELLS:
+            continue
+        end = cells[3] if len(cells) == 4 else "-"
+        rows[cells[0]].append((cells[0], cells[1], cells[2], end))
     return rows
 
 
@@ -355,7 +363,7 @@ def _parse_subdir_rows(lines: list[str]) -> list[tuple[str, str]]:
 
 
 def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, str]],
-               index_rows: list[tuple[str, str, str]], head: list[str], tail: list[str],
+               index_rows: list[tuple[str, str, str, str]], head: list[str], tail: list[str],
                subdir_notes: str = "") -> str:
     s = lib.strings
     placeholder = s["placeholder"]
@@ -379,8 +387,10 @@ def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, 
     if extra:
         parts.append(extra)
     if index_rows:
-        table = [INDEX_START, "| {} | {} | {} |".format(*s["index_header"]), "|---|---|---|"]
-        table += [f"| {_escape(f)} | {_escape(s)} | {ln} |" for f, s, ln in index_rows]
+        header = s["index_header"]
+        table = [INDEX_START, "| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+        table += [f"| {_escape(file_name)} | {_escape(symbol)} | {start} | {end} |"
+                  for file_name, symbol, start, end in index_rows]
         table.append(INDEX_END)
         parts.append("\n".join(table))
     return "\n\n".join(p for p in parts if p) + "\n"
@@ -429,15 +439,16 @@ def build_index_rows(lib: Library, d: Path, files: list[Path], report: Report,
     for f in sorted(files, key=lambda p: p.name.lower()):
         if f.name in lib.doc_names or f.suffix.lower() not in EXT_LANG:
             continue
+        no_symbol_row = (f.name, "-", "-", "-")
         try:
             symbols = extract_symbols(f)
         except Exception as exc:  # keep the previous rows of a file that fails to parse
             report.warnings.append(f"{lib.rel(f)}: parse failed, keeping previous index rows ({exc})")
-            rows.extend((previous or {}).get(f.name) or [(f.name, "-", "-")])
+            rows.extend((previous or {}).get(f.name) or [no_symbol_row])
             continue
         if not symbols:
-            rows.append((f.name, "-", "-"))
-        rows.extend((f.name, name, str(line)) for name, line in symbols)
+            rows.append(no_symbol_row)
+        rows.extend((f.name, name, str(start), str(end)) for name, start, end in symbols)
     return rows
 
 
