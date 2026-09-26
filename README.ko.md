@@ -166,3 +166,7 @@ codex plugin add agent-librarian@agent-librarian
 - 역참조(누가 무엇을 호출하는지)는 grep이나 LSP로 조회합니다. 문서에는 기록하지 않습니다.
 - 훅이 분리를 권고하면(인덱스 행 수 초과, 폴더 깊이 초과) 사용자에게 알립니다. 폴더 구조는 임의로 바꾸지 않습니다.
 - Stop 훅이 도서관이 예전 플러그인 버전으로 만들어졌다고 알리면 사용자에게 `/update-library` 실행을 요청합니다. 이 스킬은 모델이 호출할 수 없습니다.
+
+## 라이선스
+
+[Apache License 2.0](LICENSE)

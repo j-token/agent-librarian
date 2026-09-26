@@ -6,5 +6,6 @@
   "author": {
     "name": "jungminjo"
   },
+  "license": "Apache-2.0",
   "keywords": ["documentation", "knowledge-management", "claude-md", "agents-md"]
 }

@@ -162,3 +162,7 @@ A project has a library if `.librarian/config.json` exists at its root. The `lib
 - Look up reverse references (who calls what) with grep or LSP. They are not recorded in the documents.
 - If a hook recommends a split (too many index rows, folders nested too deep), tell the user. Do not restructure folders on your own.
 - If the stop hook says the library was built with an older plugin version, ask the user to run `/update-library`. It cannot be invoked by a model.
+
+## License
+
+[Apache License 2.0](LICENSE)
