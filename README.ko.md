@@ -167,6 +167,10 @@ codex plugin add agent-librarian@agent-librarian
 - 훅이 분리를 권고하면(인덱스 행 수 초과, 폴더 깊이 초과) 사용자에게 알립니다. 폴더 구조는 임의로 바꾸지 않습니다.
 - Stop 훅이 도서관이 예전 플러그인 버전으로 만들어졌다고 알리면 사용자에게 `/update-library` 실행을 요청합니다. 이 스킬은 모델이 호출할 수 없습니다.
 
+## 기여하기
+
+[CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요. 영어로 작성되어 있습니다.
+
 ## 라이선스
 
 [Apache License 2.0](LICENSE)
