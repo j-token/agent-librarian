@@ -24,7 +24,7 @@ python <plugin>/scripts/librarian.py scaffold
 python <plugin>/scripts/librarian.py index --all
 ```
 
-After this, every folder has a document and every index (file · function · line) is filled in. If the language changed, existing documents switch their generated headings to the new language, and the roles already written are kept.
+After this, every folder has a document and every index (file · function · start line · end line) is filled in. If the language changed, existing documents switch their generated headings to the new language, and the roles already written are kept.
 
 ## 3. Fill in roles (deepest folders first)
 
@@ -45,6 +45,6 @@ python <plugin>/scripts/librarian.py check
 Report to the user:
 - How many documents were created
 - Any remaining `role needed` entries
-- Any split recommendations (`warning`). Do not restructure folders; only suggest it to the user.
+- Any folder depth warnings (`warning`). Do not restructure folders; only suggest it to the user.
 
 Then give the same wrap-up as step 5 of build-library.

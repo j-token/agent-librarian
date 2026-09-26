@@ -39,4 +39,4 @@ python <plugin>/scripts/librarian.py update --replace-skill
 Report to the user:
 - What was created or updated
 - Any `role needed` entries. Offer to fill them in following `<plugin>/skills/rebuild-library/references/cataloger.md`, in the library language.
-- Any split recommendations (`warning`). Do not restructure folders; only pass them on to the user.
+- Any folder depth warnings (`warning`). Do not restructure folders; only pass them on to the user.

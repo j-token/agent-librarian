@@ -11,7 +11,7 @@ Write everything in the **library language** (the `language` value in `.libraria
 
 ## How to decide
 
-- Base your judgment on the file names in the folder, the function names in the index block, and the code itself where needed.
+- Base your judgment on the file names in the folder, the function names in the index block, and the code itself where needed. To read a function, open its file from the start line to the end line given in the index.
 - A subfolder's role comes from what its own document already says. Do not invent one.
 - If you are not sure, write only what you have verified, e.g. "Contains the `payment` modules." Do not speculate.
 
