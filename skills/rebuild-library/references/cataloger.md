@@ -1,23 +1,25 @@
-# 폴더 문서 작성 규칙 (cataloger)
+# Folder document rules (cataloger)
 
-폴더 문서 하나를 맡았을 때 따르는 규칙이다. 폴더 문서는 해당 폴더의 `CLAUDE.md` 또는 `AGENTS.md`다.
+Follow these rules when you are assigned a folder document (`CLAUDE.md` or `AGENTS.md` in that folder).
 
-## 작성하는 곳 (여기만 수정한다)
+Write everything in the **library language** (the `language` value in `.librarian/config.json`).
 
-1. **`## 이 폴더의 역할`**: `_(작성 필요)_`를 지우고 1~3문장으로 쓴다. 이 폴더가 **무엇을 위한 곳인지**, 즉 책임과 경계를 적는다.
-2. **`## 하위 폴더` 표의 역할 칸**: 각 하위 폴더 문서의 `이 폴더의 역할`을 읽고 한 줄로 줄여 쓴다. 이 칸은 하위 폴더를 고를 때 쓰는 이정표다.
+## Where you write (edit only these)
 
-## 판단 근거
+1. **The folder role section** (e.g. `## What this folder is for`): replace the placeholder (e.g. `_(to be written)_`) with 1–3 sentences stating **what this folder is for**: its responsibility and boundaries.
+2. **The role cells of the subfolder table** (e.g. `## Subfolders`): read each subfolder document's role section and condense it into one line. These cells are signposts for choosing which subfolder to enter.
 
-- 폴더 안의 파일 이름, 인덱스 블록에 있는 함수 이름, 필요하면 코드 본문을 읽고 판단한다.
-- 하위 폴더의 역할은 그 폴더 문서에 이미 적힌 내용을 기준으로 한다. 추측으로 새로 만들지 않는다.
-- 확신할 수 없으면 확인한 사실만 적는다. 예: "`payment` 관련 모듈이 모여 있다". 추측성 설명은 쓰지 않는다.
+## How to decide
 
-## 금지
+- Base your judgment on the file names in the folder, the function names in the index block, and the code itself where needed.
+- A subfolder's role comes from what its own document already says. Do not invent one.
+- If you are not sure, write only what you have verified, e.g. "Contains the `payment` modules." Do not speculate.
 
-- 함수나 파일이 무엇을 하는지 설명하지 않는다. 폴더 단위의 역할만 쓴다.
-- `<!-- librarian:index:start -->`부터 `<!-- librarian:index:end -->`까지의 블록을 수정하지 않는다.
-- 첫 줄(`# 상위 문서: …`)과 하위 폴더 표의 행 구성(추가, 삭제, 순서)을 바꾸지 않는다. 행은 스크립트가 관리한다.
-- 상위 폴더 문서에 이미 있는 내용을 반복하지 않는다. 예: 저장소 전체의 목적을 하위 폴더 문서에 다시 쓰지 않는다.
-- 하위 폴더의 세부 내용을 상위 폴더 문서로 끌어올리지 않는다. 상위 문서의 표에는 한 줄 요약만 쓴다.
-- 맡은 폴더가 아닌 곳의 문서를 수정하지 않는다.
+## Never
+
+- Describe what a function or file does. Write only the role of the folder as a whole.
+- Edit the block from `<!-- librarian:index:start -->` to `<!-- librarian:index:end -->`.
+- Change the first line (the parent link) or the rows of the subfolder table (adding, removing, reordering). The script manages the rows.
+- Repeat what a parent document already says, such as restating the purpose of the whole repository in a subfolder.
+- Pull a subfolder's details up into its parent. The parent's table gets a one-line summary only.
+- Edit documents of folders you were not assigned.

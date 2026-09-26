@@ -1,23 +1,25 @@
 ---
 name: librarian-guide
-description: 이 저장소의 폴더별 문서(CLAUDE.md/AGENTS.md) 관리 규칙. 코드를 찾거나, 파일·폴더를 추가·이동·삭제하거나, 폴더 문서를 수정할 때 사용한다.
+description: Rules for the per-folder documents (CLAUDE.md/AGENTS.md) in this repository. Use when locating code, when adding, moving, or deleting files or folders, or when editing a folder document.
 ---
 
-# 도서관 관리 규칙
+# Library rules
 
-이 저장소는 폴더마다 문서(CLAUDE.md 또는 AGENTS.md)를 둔다. 각 문서는 세 영역으로 나뉜다.
+Every folder in this repository has a document (CLAUDE.md or AGENTS.md). Each document has three parts:
 
-| 영역 | 작성 주체 | 내용 |
+| Part | Written by | Content |
 |---|---|---|
-| `## 이 폴더의 역할` | 에이전트/사람 | 이 폴더가 무엇을 위한 곳인지 |
-| `## 하위 폴더` 표 | 에이전트/사람 (행 추가·삭제는 스크립트) | 바로 아래 폴더 각각의 역할 한 줄 |
-| `<!-- librarian:index:start/end -->` 블록 | 스크립트 전용 | 파일 · 함수 · 줄 |
+| Folder role section (e.g. `## What this folder is for`) | agent / human | What this folder is for |
+| Subfolder table (e.g. `## Subfolders`) | agent / human (rows are added and removed by the script) | One line per direct subfolder describing its role |
+| `<!-- librarian:index:start/end -->` block | script only | File · function · line |
 
-## 규칙
+The library language is set in `.librarian/config.json` (`language`). Write every role in that language.
 
-1. 인덱스에서 위치를 찾았으면 해당 파일의 그 줄을 직접 열어 확인한다. 목록에 적힌 이름만 보고 함수의 동작을 추측하지 않는다.
-2. 함수나 파일이 무엇을 하는지 문서에 쓰지 않는다. 인덱스 마커 블록은 손으로 수정하지 않는다. 줄 번호는 훅이 자동으로 갱신한다.
-3. 새 폴더를 만들면 그 폴더 문서의 `이 폴더의 역할`을 채우고, 부모 문서의 `하위 폴더` 표에서 해당 행의 역할을 채운다.
-4. 어떤 함수를 누가 쓰는지(역참조)는 문서에 적지 않는다. grep이나 LSP로 조회한다.
-5. 한 정보는 한 문서에만 적는다. 상위 문서에 적힌 내용을 하위 문서에서 반복하지 않고, 하위 문서의 세부 내용을 상위 문서로 끌어올리지 않는다.
-6. 훅이나 check가 분리를 권고하면(인덱스 행 수 초과, 폴더 깊이 초과) 사용자에게 알린다. 폴더 구조는 임의로 바꾸지 않는다.
+## Rules
+
+1. When the index tells you where something is, open that file at that line and read it. Never guess what a function does from its name in the index.
+2. Never write down what a function or file does. Never edit the index marker block by hand; hooks keep the line numbers up to date.
+3. When you create a folder, fill in the role section of its document and the role cell for it in the parent document's subfolder table.
+4. Do not record who uses a function (reverse references). Look them up with grep or LSP instead.
+5. Each piece of information lives in exactly one document. Do not repeat what a parent document says in a child document, and do not pull a child's details up into the parent.
+6. If a hook or check recommends a split (too many index rows, folders nested too deep), tell the user. Do not restructure folders on your own.

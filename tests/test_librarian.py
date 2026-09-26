@@ -10,6 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import librarian as lb  # noqa: E402
 
+EN = lb.DOC_STRINGS["en"]
+KO = lb.DOC_STRINGS["ko"]
+
 SOURCES = {
     "src/auth/auth.py": (
         "import os\n"
@@ -57,8 +60,9 @@ def run(root, *argv):
     lb.main(["--root", str(root), *argv])
 
 
-def init(root, doc="CLAUDE.md", targets="claude,agents,codex"):
-    run(root, "init", "--doc", doc, "--targets", targets)
+def init(root, doc="CLAUDE.md", targets="claude,agents,codex", language=None):
+    extra = ["--language", language] if language else []
+    run(root, "init", "--doc", doc, "--targets", targets, *extra)
     run(root, "scaffold")
 
 
@@ -83,7 +87,7 @@ def hook(event, payload):
         sys.stdin, sys.stdout = stdin, stdout
 
 
-# ---------------------------------------------------------------- 추출
+# ---------------------------------------------------------------- extraction
 
 
 @pytest.mark.parametrize("rel,expected", [
@@ -107,11 +111,11 @@ def test_scaffold_creates_hierarchy(project):
     for d in [".", "src", "src/auth", "src/api", "web", "native", "assets"]:
         assert (project / d / "CLAUDE.md").is_file(), d
     root = (project / "CLAUDE.md").read_text(encoding="utf-8")
-    assert lb.ROOT_NOTE in root
+    assert EN["root_note"] in root
     assert "| src/ |" in root and "| web/ |" in root
-    assert lb.INDEX_START not in root  # 루트에는 코드 파일이 없음
+    assert lb.INDEX_START not in root  # the root has no code files
     sub = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
-    assert sub.startswith("# 상위 문서: ../CLAUDE.md")
+    assert sub.startswith("# Parent: ../CLAUDE.md")
     assert index_rows(project / "src/auth/CLAUDE.md") == [
         ("auth.py", "Session", "3"), ("auth.py", "Session.refresh", "4"), ("auth.py", "login", "9")]
     assert lb.INDEX_START not in (project / "assets/CLAUDE.md").read_text(encoding="utf-8")
@@ -119,32 +123,32 @@ def test_scaffold_creates_hierarchy(project):
 
 def test_scaffold_does_not_overwrite(project):
     (project / "src").mkdir(exist_ok=True)
-    (project / "src/CLAUDE.md").write_text("사용자 문서\n", encoding="utf-8")
+    (project / "src/CLAUDE.md").write_text("user document\n", encoding="utf-8")
     init(project)
-    assert (project / "src/CLAUDE.md").read_text(encoding="utf-8") == "사용자 문서\n"
+    assert (project / "src/CLAUDE.md").read_text(encoding="utf-8") == "user document\n"
 
 
 def test_index_preserves_human_text(project):
     init(project)
     doc = project / "src/auth/CLAUDE.md"
-    text = doc.read_text(encoding="utf-8").replace(lb.PLACEHOLDER, "인증 모듈.\n\n- 세부 줄")
-    text += "\n## 메모\n\n사람이 쓴 섹션\n"
+    text = doc.read_text(encoding="utf-8").replace(EN["placeholder"], "Auth module.\n\n- detail")
+    text += "\n## Notes\n\nsection written by a human\n"
     doc.write_text(text, encoding="utf-8")
     src = project / "src/auth/auth.py"
     src.write_text("# header\n\n" + src.read_text(encoding="utf-8"), encoding="utf-8")
     run(project, "index", str(project / "src/auth"))
     out = doc.read_text(encoding="utf-8")
-    assert "인증 모듈.\n\n- 세부 줄" in out and "사람이 쓴 섹션" in out
+    assert "Auth module.\n\n- detail" in out and "section written by a human" in out
     assert ("auth.py", "Session", "5") in index_rows(doc)
     run(project, "index", str(project / "src/auth"))
-    assert doc.read_text(encoding="utf-8") == out  # 멱등
+    assert doc.read_text(encoding="utf-8") == out  # idempotent
 
 
 def test_both_mode(project):
     init(project, doc="both")
     assert (project / "src/AGENTS.md").is_file()
     assert (project / "src/CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
-    assert "# 상위 문서: ../AGENTS.md" in (project / "src/auth/AGENTS.md").read_text(encoding="utf-8")
+    assert "# Parent: ../AGENTS.md" in (project / "src/auth/AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_exclude_and_gitignore(project):
@@ -161,7 +165,7 @@ def test_exclude_and_gitignore(project):
         assert not (project / d / "CLAUDE.md").exists(), d
 
 
-# ---------------------------------------------------------------- 훅
+# ---------------------------------------------------------------- hooks
 
 
 def test_hook_post_edit_claude(project):
@@ -211,7 +215,7 @@ def _fill_all_roles(project):
     for doc in project.rglob("CLAUDE.md"):
         if ".librarian" in doc.parts:
             continue
-        text = doc.read_text(encoding="utf-8").replace(lb.PLACEHOLDER, "역할")
+        text = doc.read_text(encoding="utf-8").replace(EN["placeholder"], "role")
         doc.write_text(text, encoding="utf-8")
 
 
@@ -226,7 +230,7 @@ def test_hook_stop_after_folder_move(project):
     out = json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": False}))
     assert out["decision"] == "block" and "src" in out["reason"]
     table = (project / "src/CLAUDE.md").read_text(encoding="utf-8")
-    assert "| auth/ |" not in table and f"| identity/ | {lb.PLACEHOLDER} |" in table
+    assert "| auth/ |" not in table and f"| identity/ | {EN["placeholder"]} |" in table
 
     again = json.loads(hook("stop", {"cwd": str(project), "stop_hook_active": True}))
     assert "decision" not in again
@@ -242,7 +246,7 @@ def test_hook_stop_warns_on_size(project):
     assert "src/auth" in out["systemMessage"]
 
 
-# ---------------------------------------------------------------- 스킬 연결
+# ---------------------------------------------------------------- skill links
 
 
 def test_init_links_skills(project):
@@ -288,3 +292,47 @@ def test_pending_deepest_first(project, capsys):
     lines = capsys.readouterr().out.split()
     depths = [0 if l == "." else len(Path(l).parts) for l in lines]
     assert depths == sorted(depths, reverse=True) and lines[-1] == "."
+
+
+# ---------------------------------------------------------------- library language
+
+
+def test_default_language_is_english(project):
+    init(project)
+    assert json.loads((project / ".librarian/config.json").read_text(encoding="utf-8"))["language"] == "en"
+    text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
+    assert EN["role"] in text and "| File | Function | Line |" in text
+    assert "| Folder | Role |" in (project / "src/CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_korean_library(project):
+    init(project, language="ko")
+    text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
+    assert text.startswith("# 상위 문서: ../CLAUDE.md")
+    assert KO["role"] in text and KO["placeholder"] in text and "| 파일 | 함수 | 줄 |" in text
+    assert KO["root_note"] in (project / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "src/auth" in [r for r in lb.sync_dirs(lb.load_library(project), None, False).pending]
+
+
+def test_language_switch_keeps_roles(project):
+    init(project, language="ko")
+    doc = project / "src/CLAUDE.md"
+    doc.write_text(doc.read_text(encoding="utf-8")
+                   .replace(KO["placeholder"], "소스 코드", 1)
+                   .replace(f"| auth/ | {KO['placeholder']} |", "| auth/ | 인증 |"), encoding="utf-8")
+    run(project, "init", "--language", "en", "--doc", "CLAUDE.md")
+    run(project, "index", "--all")
+    text = doc.read_text(encoding="utf-8")
+    assert text.startswith("# Parent: ../CLAUDE.md")
+    assert EN["role"] in text and "소스 코드" in text
+    assert "| auth/ | 인증 |" in text and f"| api/ | {EN['placeholder']} |" in text
+    assert not any(v in text for v in (KO["role"], KO["subdirs"], KO["placeholder"]))
+    assert EN["root_note"] in (project / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_unknown_language_uses_english_headings(project):
+    init(project, language="ja")
+    assert EN["role"] in (project / "src/CLAUDE.md").read_text(encoding="utf-8")
+    init(project)
+    out = json.loads(hook("stop", {"cwd": str(project)}))
+    assert out["decision"] == "block" and "(ja)" in out["reason"]

@@ -1,12 +1,12 @@
 ---
 name: folder-cataloger
-description: 폴더 문서(CLAUDE.md/AGENTS.md)의 '이 폴더의 역할'과 하위 폴더 표의 역할 칸을 채운다. rebuild-library 스킬이 폴더 단위로 호출한다.
+description: Fills in the folder role section and the role cells of the subfolder table in folder documents (CLAUDE.md/AGENTS.md). Called per batch of folders by the rebuild-library skill.
 model: sonnet
 tools: Read, Glob, Grep, Edit
 ---
 
-작업 지시에 두 가지가 주어진다. 담당할 폴더 문서 경로들과 규칙 파일(`cataloger.md`)의 경로다.
+Your task gives you three things: the folder documents you are responsible for, the path to the rules file (`cataloger.md`), and the library language.
 
-1. 규칙 파일을 먼저 읽고 그대로 따른다.
-2. 담당한 폴더 문서만 수정한다.
-3. 끝나면 수정한 문서 경로만 한 줄씩 보고한다. 판단이 불확실했던 폴더가 있으면 그 이유도 한 줄로 덧붙인다.
+1. Read the rules file first and follow it exactly. Write in the library language.
+2. Edit only the folder documents assigned to you.
+3. When you are done, report the paths of the documents you edited, one per line. If you were unsure about a folder, add one line explaining why.
