@@ -78,6 +78,7 @@ DEFAULT_CONFIG = {
     "exclude": [],
     "maxEntries": 60,
     "maxDepth": 6,
+    "injectRules": True,
 }
 
 # ---------------------------------------------------------------- config / paths
@@ -145,7 +146,28 @@ def _read_config(path: Path) -> dict:
             cfg[key] = DEFAULT_CONFIG[key]
         if cfg[key] < 1:
             cfg[key] = DEFAULT_CONFIG[key]
+    cfg["injectRules"] = _is_true(cfg["injectRules"], default=DEFAULT_CONFIG["injectRules"])
     return cfg
+
+
+def _write_config(root: Path, cfg: dict) -> Path:
+    path = root / CONFIG_DIR / CONFIG_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _is_true(value, default: bool = False) -> bool:
+    """Read a flag from a hand-edited config value or a hook payload value, where booleans
+    may arrive as strings ("false", "0", "off"). null or an unrecognized value gives default."""
+    if isinstance(value, bool):
+        return value
+    word = str(value).strip().lower()
+    if word in ("true", "1", "on", "yes"):
+        return True
+    if word in ("false", "0", "off", "no"):
+        return False
+    return default
 
 
 def _is_excluded(lib: Library, rel_parts: tuple[str, ...]) -> bool:
@@ -608,6 +630,18 @@ def skill_source(lib: Library) -> Path:
     return lib.root / CONFIG_DIR / "skills" / GUIDE_SKILL
 
 
+_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(?:.*?\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+
+
+def library_rules_text(lib: Library) -> str:
+    """The rules skill body without its frontmatter. The SKILL.md stays the single source
+    of the rule text, so the project's copy wins over the plugin template."""
+    skill = skill_source(lib) / "SKILL.md"
+    if not skill.is_file():
+        skill = TEMPLATE_DIR / "SKILL.md"
+    return _FRONTMATTER.sub("", skill.read_text(encoding="utf-8-sig"), count=1).strip()
+
+
 def check_skills(lib: Library, fix: bool) -> Report:
     report = Report()
     src = skill_source(lib)
@@ -721,8 +755,7 @@ def hook_stop(payload: dict) -> None:
     out: dict = {}
     if report.warnings:
         out["systemMessage"] = "librarian: " + "; ".join(report.warnings)
-    active = payload.get("stop_hook_active")
-    active = active is True or str(active).strip().lower() == "true"
+    active = _is_true(payload.get("stop_hook_active"))
     if report.pending and not active:
         out["decision"] = "block"
         out["reason"] = (
@@ -731,6 +764,16 @@ def hook_stop(payload: dict) -> None:
             f"Read the code and fill them in, in the library language ({lib.language}). "
             "Do not describe functions or files, and do not edit the index marker block.")
     _emit(out)
+
+
+def hook_session_start(payload: dict) -> None:
+    cwd = Path(payload.get("cwd") or os.getcwd())
+    lib = load_library(cwd)
+    if lib is None or not lib.config["injectRules"]:
+        return
+    context = f"{library_rules_text(lib)}\n\nLibrary language: {lib.language}, folder document: {lib.primary_doc}"
+    _emit({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                  "additionalContext": context}})
 
 
 # ---------------------------------------------------------------- CLI
@@ -763,8 +806,7 @@ def cmd_init(args) -> None:
         cfg["targets"] = [t for t in args.targets.split(",") if t]
     if args.exclude:
         cfg["exclude"] = sorted(set(cfg.get("exclude", [])) | set(args.exclude))
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_config(root, cfg)
     lib = Library(root=root, config=cfg)
     report = check_skills(lib, fix=True)
     _ensure_gitignore(lib)
@@ -815,6 +857,18 @@ def cmd_pending(args) -> None:
         print(rel)
 
 
+def cmd_rules(args) -> None:
+    lib = _require(Path(args.root))
+    inject = lib.config["injectRules"]
+    if args.state != "status":
+        # change only this key so the file does not gain every default value
+        raw = json.loads(_read(lib.root / CONFIG_DIR / CONFIG_FILE) or "{}")
+        inject = args.state == "on"
+        raw["injectRules"] = inject
+        _write_config(lib.root, raw)
+    print(f"[rules] {'on' if inject else 'off'}")
+
+
 def cmd_hook(args) -> None:
     raw = sys.stdin.buffer.read().decode("utf-8", "replace")
     try:
@@ -824,6 +878,8 @@ def cmd_hook(args) -> None:
     try:
         if args.event == "post-edit":
             hook_post_edit(payload)
+        elif args.event == "session-start":
+            hook_session_start(payload)
         else:
             hook_stop(payload)
     except Exception as exc:  # hooks never block the editing flow
@@ -862,8 +918,12 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("pending").set_defaults(func=cmd_pending)
 
+    p = sub.add_parser("rules")
+    p.add_argument("state", choices=["on", "off", "status"])
+    p.set_defaults(func=cmd_rules)
+
     p = sub.add_parser("hook")
-    p.add_argument("event", choices=["post-edit", "stop"])
+    p.add_argument("event", choices=["post-edit", "stop", "session-start"])
     p.set_defaults(func=cmd_hook)
 
     args = parser.parse_args(argv)

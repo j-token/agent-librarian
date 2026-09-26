@@ -57,6 +57,7 @@ If `python <plugin>/scripts/librarian.py pending` lists any folders, fill them i
 - Explain what happens from now on:
   - When a file is edited, a hook updates the index.
   - At the end of each turn, a check hook verifies that the documents match the code.
+  - At the start of each session, a hook adds the library rules to the context. `/library-rules off` turns this off.
 - Tell Codex users two things:
   - `~/.codex/config.toml` needs `[features] hooks = true`.
   - Codex runs an installed plugin's hooks only after they are trusted once in `/hooks`.

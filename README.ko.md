@@ -46,12 +46,14 @@
 - 루트 문서에는 최상위 폴더들의 역할만 적습니다. 각 폴더 문서에는 바로 아래 폴더들의 역할만 적습니다.
 - 파일 · 함수 · 줄은 스크립트가 만듭니다. **함수가 무엇을 하는지는 적지 않습니다.** AI가 함수를 잘못 이해해서 틀린 설명을 적는 일(환각)을 막기 위해서입니다.
 - 파일을 편집하면 훅이 줄 번호를 바로 갱신합니다. 턴이 끝날 때마다 check 훅이 문서와 코드가 어긋난 곳을 고치고, 역할이 비어 있는 폴더가 있으면 채우라고 요청합니다.
+- 세션을 시작할 때마다(`/clear`와 압축 뒤 포함) 훅이 도서관 규칙을 에이전트의 맥락에 넣어 줍니다. 그래서 에이전트가 스킬을 먼저 불러오지 않아도 규칙을 따릅니다. `/library-rules off`로 끄고 `/library-rules on`으로 다시 켤 수 있습니다.
 - 설계 근거는 [지식 관리 이론 조사](docs/research/knowledge-management.md)에 정리했습니다.
 
 설치하면 프로젝트에 아래 파일들이 생깁니다.
 
 ```
-.librarian/config.json                  # 도서관 언어, 문서 이름, 제외 경로, 분리 기준(maxEntries, maxDepth)
+.librarian/config.json                  # 도서관 언어, 문서 이름, 제외 경로, 분리 기준(maxEntries, maxDepth),
+                                        # 세션 시작 규칙 주입 여부(injectRules)
 .librarian/skills/librarian-guide/      # 관리지침 스킬 (원본)
 .claude/skills/librarian-guide          → 원본에 연결 (Claude Code)
 .agents/skills/librarian-guide          → 원본에 연결 (Agent Skills 표준 경로)
@@ -126,6 +128,14 @@ codex plugin add agent-librarian@agent-librarian
 2. 필요한 질문에 응답해주세요. 첫 질문은 도서관 언어입니다.
 
 3. CLAUDE.md 또는 AGENTS.md에 추가된 지식 관리 규칙이 적절한지 확인하세요.
+
+### 세션 시작 규칙 켜고 끄기
+
+- `/library-rules off`: 세션을 시작할 때 도서관 규칙을 맥락에 넣지 않습니다.
+- `/library-rules on`: 다시 넣습니다. 기본값입니다.
+- `/library-rules status`: 지금 설정을 보여 줍니다.
+
+바꾼 설정은 다음 세션(또는 `/clear` 뒤)부터 적용됩니다.
 
 ## 에이전트를 위한 지침
 

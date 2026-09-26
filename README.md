@@ -43,12 +43,14 @@ The first thing the install commands ask is the **library language**: the langua
 - The root document describes only the role of each top-level folder. Each folder document describes only the folders directly beneath it.
 - A script generates the file, function, and line entries. **The documents never describe what a function does.** This prevents hallucination, where an AI misreads a function and writes down a wrong description of it.
 - When a file is edited, a hook updates the line numbers right away. At the end of every turn, a check hook fixes any mismatch between the documents and the code, and asks the agent to fill in any folder whose role is still empty.
+- At the start of every session (including after `/clear` and compaction), a hook adds the library rules to the agent's context, so the agent follows them without having to load the skill first. Turn this off with `/library-rules off` and back on with `/library-rules on`.
 - The reasoning behind the design is written up in the [knowledge management research notes](docs/research/knowledge-management.md) (in Korean).
 
 Installing the library adds the following to your project:
 
 ```
-.librarian/config.json                  # library language, document name, excluded paths, split thresholds (maxEntries, maxDepth)
+.librarian/config.json                  # library language, document name, excluded paths, split thresholds (maxEntries, maxDepth),
+                                        # rule injection at session start (injectRules)
 .librarian/skills/librarian-guide/      # the management-rules skill (source)
 .claude/skills/librarian-guide          → linked to the source (Claude Code)
 .agents/skills/librarian-guide          → linked to the source (Agent Skills standard path)
@@ -122,6 +124,14 @@ Once the plugin is installed, build your "library" with one of the commands belo
 2. Answer the questions it asks, starting with the library language.
 
 3. Check that the knowledge management rules added to CLAUDE.md or AGENTS.md look right to you.
+
+### Turning the session-start rules on or off
+
+- `/library-rules off`: stop adding the library rules to the context at session start.
+- `/library-rules on`: start again (this is the default).
+- `/library-rules status`: show the current setting.
+
+The change applies from the next session (or after `/clear`).
 
 ## Instructions for agents
 

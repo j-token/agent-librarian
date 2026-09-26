@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -7,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import librarian as lb  # noqa: E402
 
 EN = lb.DOC_STRINGS["en"]
@@ -519,3 +521,110 @@ def test_negative_limits_fall_back(project):
     cfg["maxEntries"] = -5
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     assert lb.load_library(project).config["maxEntries"] == lb.DEFAULT_CONFIG["maxEntries"]
+
+
+# ---------------------------------------------------------------- session-start rules
+
+
+def read_config(project):
+    return json.loads((project / ".librarian/config.json").read_text(encoding="utf-8"))
+
+
+def write_config(project, cfg):
+    (project / ".librarian/config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def session_output(project):
+    """The hookSpecificOutput of the session-start hook, or None when it printed nothing."""
+    out = hook("session-start", {"cwd": str(project)})
+    return json.loads(out)["hookSpecificOutput"] if out else None
+
+
+def session_context(project):
+    return session_output(project)["additionalContext"]
+
+
+def test_session_start_injects_rules_without_frontmatter(project):
+    init(project)
+    out = session_output(project)
+    assert out["hookEventName"] == "SessionStart"
+    context = out["additionalContext"]
+    assert context.startswith("# Library rules")
+    assert "name: librarian-guide" not in context
+    assert "Library language: en, folder document: CLAUDE.md" in context
+
+
+def test_session_start_strips_empty_frontmatter(project):
+    init(project)
+    skill = project / ".librarian/skills/librarian-guide/SKILL.md"
+    skill.write_text("---\n---\n# My rules\n", encoding="utf-8")
+    assert session_context(project).startswith("# My rules")
+
+
+def test_rules_off_stops_injection_and_on_restores_it(project):
+    init(project)
+    run(project, "rules", "off")
+    assert read_config(project)["injectRules"] is False
+    assert session_output(project) is None
+
+    run(project, "rules", "on")
+    assert read_config(project)["injectRules"] is True
+    assert "# Library rules" in session_context(project)
+
+
+def test_rules_off_changes_only_its_own_key(project):
+    init(project)
+    write_config(project, {"language": "en"})
+    run(project, "rules", "off")
+    assert read_config(project) == {"language": "en", "injectRules": False}
+
+
+def test_rules_status_prints_current_state(project, capsys):
+    init(project)
+    capsys.readouterr()
+    run(project, "rules", "status")
+    assert capsys.readouterr().out.strip() == "[rules] on"
+
+
+def test_config_without_inject_key_injects_rules(project):
+    init(project)
+    cfg = read_config(project)
+    del cfg["injectRules"]
+    write_config(project, cfg)
+    assert "# Library rules" in session_context(project)
+
+
+def test_inject_rules_string_false_turns_injection_off(project):
+    init(project)
+    cfg = read_config(project)
+    cfg["injectRules"] = "false"
+    write_config(project, cfg)
+    assert session_output(project) is None
+
+
+@pytest.mark.parametrize("value", [None, "maybe"])
+def test_inject_rules_null_or_unknown_value_keeps_injection_on(project, value):
+    init(project)
+    cfg = read_config(project)
+    cfg["injectRules"] = value
+    write_config(project, cfg)
+    assert "# Library rules" in session_context(project)
+
+
+def test_session_start_without_library_prints_nothing(tmp_path):
+    assert hook("session-start", {"cwd": str(tmp_path)}) == ""
+
+
+def test_session_start_command_from_hooks_json_prints_rules(project):
+    init(project)
+    hooks = json.loads((REPO_ROOT / "hooks/hooks.json").read_text(encoding="utf-8"))
+    command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT)}
+    payload = json.dumps({"cwd": str(project), "hook_event_name": "SessionStart"})
+
+    res = subprocess.run(command, shell=True, cwd=project, env=env, input=payload.encode("utf-8"),
+                         capture_output=True, timeout=60)
+
+    out = json.loads(res.stdout.decode("utf-8"))
+    assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert out["hookSpecificOutput"]["additionalContext"] == session_context(project)
