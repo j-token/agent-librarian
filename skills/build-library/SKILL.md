@@ -1,6 +1,6 @@
 ---
 name: build-library
-description: Installs a claude-librarian library in a new project (or one with little code). Creates the config file, the library-rules skill, and the folder document skeletons.
+description: Installs a agent-librarian library in a new project (or one with little code). Creates the config file, the library-rules skill, and the folder document skeletons.
 disable-model-invocation: true
 ---
 

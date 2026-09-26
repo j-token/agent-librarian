@@ -1,14 +1,14 @@
 {
-  "name": "claude-librarian",
+  "name": "agent-librarian",
   "owner": {
     "name": "jungminjo"
   },
   "metadata": {
-    "description": "claude-librarian: organize a codebase like a library."
+    "description": "agent-librarian: organize a codebase like a library."
   },
   "plugins": [
     {
-      "name": "claude-librarian",
+      "name": "agent-librarian",
       "source": "./",
       "description": "Organizes a codebase like a library with a CLAUDE.md/AGENTS.md in every folder and a file · function · line index."
     }

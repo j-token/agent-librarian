@@ -1,4 +1,4 @@
-"""Dependency-free symbol extractor for claude-librarian.
+"""Dependency-free symbol extractor for agent-librarian.
 
 extract_symbols(path) returns [(name, line)] with 1-based lines, where the line is the line
 that holds the declaration's name. Methods are prefixed with their container ("Class.method").

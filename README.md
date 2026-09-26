@@ -79,22 +79,22 @@ You only need Python 3.9 or later.
 **Claude Code**: run these inside Claude Code, then run `/reload-plugins`.
 
 ```
-/plugin marketplace add j-token/claude-librarian
-/plugin install claude-librarian@claude-librarian
+/plugin marketplace add j-token/agent-librarian
+/plugin install agent-librarian@agent-librarian
 ```
 
 You can also do the same from a terminal:
 
 ```bash
-claude plugin marketplace add j-token/claude-librarian
-claude plugin install claude-librarian@claude-librarian
+claude plugin marketplace add j-token/agent-librarian
+claude plugin install agent-librarian@agent-librarian
 ```
 
 **Codex**: run these in a terminal.
 
 ```bash
-codex plugin marketplace add j-token/claude-librarian
-codex plugin add claude-librarian@claude-librarian
+codex plugin marketplace add j-token/agent-librarian
+codex plugin add agent-librarian@agent-librarian
 ```
 
 Then turn on `[features] hooks = true` in `~/.codex/config.toml`, start Codex, and trust this plugin's hooks in `/hooks`.

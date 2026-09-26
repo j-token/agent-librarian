@@ -82,22 +82,22 @@ Python 3.9 이상만 있으면 됩니다.
 **Claude Code**: Claude Code 안에서 아래 명령어를 입력한 다음 `/reload-plugins`를 실행하세요.
 
 ```
-/plugin marketplace add j-token/claude-librarian
-/plugin install claude-librarian@claude-librarian
+/plugin marketplace add j-token/agent-librarian
+/plugin install agent-librarian@agent-librarian
 ```
 
 터미널에서 설치할 수도 있습니다.
 
 ```bash
-claude plugin marketplace add j-token/claude-librarian
-claude plugin install claude-librarian@claude-librarian
+claude plugin marketplace add j-token/agent-librarian
+claude plugin install agent-librarian@agent-librarian
 ```
 
 **Codex**: 터미널에서 아래 명령어를 입력하세요.
 
 ```bash
-codex plugin marketplace add j-token/claude-librarian
-codex plugin add claude-librarian@claude-librarian
+codex plugin marketplace add j-token/agent-librarian
+codex plugin add agent-librarian@agent-librarian
 ```
 
 그다음 `~/.codex/config.toml`에 `[features] hooks = true`를 켜고, Codex를 실행해서 `/hooks`에서 이 플러그인의 훅을 신뢰(trust)하세요.

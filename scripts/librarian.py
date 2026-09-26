@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""claude-librarian: CLI that maintains per-folder documents (CLAUDE.md / AGENTS.md).
+"""agent-librarian: CLI that maintains per-folder documents (CLAUDE.md / AGENTS.md).
 
 Each document separates the part written by humans/LLMs (folder role, subfolder table) from
 the part written by this script (the index marker block). The index records only
@@ -647,7 +647,7 @@ def _ensure_gitignore(lib: Library) -> None:
     missing = [l for l in lines if l not in current]
     if not missing:
         return
-    comment = "# claude-librarian: skill links (restored automatically by check)"
+    comment = "# agent-librarian: skill links (restored automatically by check)"
     block = ["", comment] if current else [comment]
     gi.write_text("\n".join(current + block + missing) + "\n", encoding="utf-8", newline="\n")
 

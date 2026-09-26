@@ -1,7 +1,7 @@
 # 지식 관리 이론 조사: 미국 도서관학 · 위키피디아 · 나무위키
 
 > 조사일: 2026-09-26
-> 목적: claude-librarian의 "폴더별 CLAUDE.md/AGENTS.md 계층 문서" 설계에 쓸 이론적 근거 수집
+> 목적: agent-librarian의 "폴더별 CLAUDE.md/AGENTS.md 계층 문서" 설계에 쓸 이론적 근거 수집
 
 ## 대상 설계 요약
 

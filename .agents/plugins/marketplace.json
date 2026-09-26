@@ -1,8 +1,8 @@
 {
-  "name": "claude-librarian",
+  "name": "agent-librarian",
   "plugins": [
     {
-      "name": "claude-librarian",
+      "name": "agent-librarian",
       "source": {
         "source": "local",
         "path": "./"

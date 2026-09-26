@@ -1,6 +1,6 @@
 ---
 name: rebuild-library
-description: Scans an existing codebase and builds (or rebuilds) a claude-librarian library. A script generates the index; agents fill in folder roles, deepest folders first.
+description: Scans an existing codebase and builds (or rebuilds) a agent-librarian library. A script generates the index; agents fill in folder roles, deepest folders first.
 disable-model-invocation: true
 ---
 
