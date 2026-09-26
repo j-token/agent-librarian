@@ -50,9 +50,25 @@ These rules are the core of the project. Changes that break them will not be acc
 - Name each test after the situation and the expected result, for example `test_rules_off_changes_only_its_own_key`.
 - If you change the symbol extractor (`scripts/extract.py`), run `python dev/compare.py <dir>` on real code before and after your change, and include both results in the pull request.
 
+## Branches
+
+- **Write branch names in English**, in lowercase words joined by hyphens.
+- **Start the name with a prefix:**
+
+  | Prefix | Use for | Example |
+  |---|---|---|
+  | `feat/` | a new feature | `feat/user-login` |
+  | `bug/` | a bug fix | `bug/login-token-expiry` |
+  | `perf/` | a performance improvement | `perf/list-query-optimization` |
+  | `refactor/` | a structural change with no change in behavior | `refactor/split-auth-module` |
+  | `misc/` | only for grouping small changes that fit none of the above | `misc/fix-typos` |
+
+- Do not use any other prefix.
+
 ## Commits
 
-- **One change per commit.** Do not mix unrelated changes; split them into separate commits.
+- **Write commit messages in English.**
+- **One change per commit.** Each commit holds exactly one piece of work with its own message, so a reviewer can look at one change at a time. If the working tree mixes unrelated changes, stage and commit them separately instead of bundling them.
 - **Start the subject with a prefix:**
 
   | Prefix | Use for |
@@ -61,9 +77,9 @@ These rules are the core of the project. Changes that break them will not be acc
   | `bug:` | a bug fix |
   | `perf:` | a performance improvement |
   | `refactor:` | a structural change with no change in behavior |
-  | `misc:` | small changes that fit none of the above |
+  | `misc:` | only for grouping small changes that fit none of the above |
 
-- Write the message in English or Korean.
+- Do not use any other prefix.
 
 ## Pull requests
 
