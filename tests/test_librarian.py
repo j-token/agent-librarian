@@ -73,7 +73,8 @@ def root_doc(project):
 
 
 def plugin_version_from_manifest():
-    return json.loads((REPO_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
+    return json.loads((REPO_ROOT / ".codex-plugin/plugin.json").read_text(
+        encoding="utf-8"))["version"]
 
 
 def commit_all(project):
@@ -894,6 +895,65 @@ def test_update_keeps_korean_headings_and_roles(project):
 
 
 # ---------------------------------------------------------------- stop hook version notice
+
+
+@pytest.mark.parametrize("codex_manifest,claude_manifest,expected_version", [
+    (b'{"version":"0.6.1"}', b'{"version":"0.6.0"}', "0.6.1"),
+    (None, b'{"version":"0.6.1"}', "0.6.1"),
+    (b'{', b'{"version":"0.6.1"}', "0.6.1"),
+    (b'\xff', b'{"version":"0.6.1"}', "0.6.1"),
+    (b'[]', b'{"version":"0.6.1"}', "0.6.1"),
+    (None, None, None),
+    (b'{', b'\xff', None),
+], ids=["codex-preferred", "claude-only", "malformed-codex", "non-utf8-codex",
+        "non-object-codex", "both-absent", "both-unreadable"])
+def test_native_manifests_stamp_cli_versions_and_preserve_hook_notices(
+        project, tmp_path, codex_manifest, claude_manifest, expected_version):
+    plugin_root = tmp_path / "native plugin"
+    shutil.copytree(REPO_ROOT / "scripts", plugin_root / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    for manifest_dir, contents in ((".codex-plugin", codex_manifest),
+                                   (".claude-plugin", claude_manifest)):
+        if contents is not None:
+            manifest = plugin_root / manifest_dir / "plugin.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_bytes(contents)
+    # A stale portable manifest must not affect the migrated version lookup.
+    (plugin_root / "plugin.json").write_text('{"version":"99.0.0"}', encoding="utf-8")
+    script = plugin_root / "scripts/librarian.py"
+
+    def cli(*argv, payload=None):
+        result = subprocess.run(
+            [sys.executable, str(script), "--root", str(project), *argv], cwd=project,
+            env={**os.environ, "PYTHONUTF8": "1"},
+            input=json.dumps(payload) if payload is not None else None,
+            text=True, encoding="utf-8", capture_output=True, timeout=60)
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        return result.stdout
+
+    cli("init", "--doc", "AGENTS.md")
+    assert read_config(project)["libraryVersion"] == expected_version
+    cli("scaffold")
+    cfg = read_config(project)
+    cfg["libraryVersion"] = "0.0.1"
+    cfg["maxDocLines"] = 30
+    write_config(project, cfg)
+    rules = project / ".claude/rules/long.md"
+    rules.parent.mkdir(parents=True)
+    rules.write_text("Follow this rule.\n" * 31, encoding="utf-8")
+
+    context = json.loads(cli("hook", "session-start", payload={"cwd": str(project)}))
+    assert context["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert ".claude/rules/long.md" in context["hookSpecificOutput"]["additionalContext"]
+    stop = json.loads(cli("hook", "stop", payload={"cwd": str(project)}))
+    assert stop["decision"] == "block"
+    assert ("/update-library" in stop.get("systemMessage", "")) == (expected_version is not None)
+
+    cli("update")
+    assert read_config(project)["libraryVersion"] == expected_version
+    stop = json.loads(cli("hook", "stop", payload={"cwd": str(project), "stop_hook_active": True}))
+    assert "/update-library" not in stop.get("systemMessage", "")
 
 
 # These tests pass stop_hook_active: True only to suppress the empty-role block, so the

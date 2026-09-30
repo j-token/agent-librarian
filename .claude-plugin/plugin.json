@@ -1,7 +1,6 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-librarian",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Organizes a codebase like a library with a CLAUDE.md/AGENTS.md in every folder. The file · function · start/end line index is generated automatically, with no dependencies beyond Python.",
   "author": {
     "name": "jungminjo"

@@ -24,7 +24,7 @@ claude --plugin-dir /path/to/agent-librarian
 
 - **Standard library only.** Code under `scripts/` must run on Python 3.9+ with nothing but the standard library. Do not add runtime dependencies. Keep `from __future__ import annotations` at the top of each module so newer type syntax stays 3.9-compatible.
 - **Development tools are the exception.** Files under `dev/` may use extra packages (for example `tree-sitter-language-pack`), because they are never run by users.
-- **Support both Claude Code and Codex.** The plugin follows the [Agent Plugins](https://agent-plugins.org/) layout and runs on both agents. When you add or change a hook in `hooks/hooks.json`:
+- **Support both Claude Code and Codex.** Keep the native manifests in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` at the same version. Codex's manifest points to the shared `hooks/hooks.json`; Claude Code discovers that file at its default path. Do not restore a root Agent Plugins `plugin.json`: the tested Codex runtimes skip hook loading for that format (see [issue #4](https://github.com/j-token/agent-librarian/issues/4)). When you add or change a hook in `hooks/hooks.json`:
   - Read the plugin root from `CLAUDE_PLUGIN_ROOT` or `PLUGIN_ROOT`.
   - Keep the `python3 ... || python ...` fallback, since either name may be missing.
   - Copy the command format of the existing hooks.
@@ -48,6 +48,14 @@ These rules are the core of the project. Changes that break them will not be acc
 - Every change to behavior needs a test in `tests/`.
 - Test through the real entry points instead of internal helpers: the CLI (`lb.main`) and the hook helper `hook()` in `tests/test_librarian.py`.
 - Name each test after the situation and the expected result, for example `test_scaffold_does_not_overwrite`.
+- For native Codex hook discovery, run the opt-in E2E check against a real Codex executable. It uses an isolated `CODEX_HOME`, installs a local marketplace fixture, restarts the app-server, and checks `hooks/list`. It does not change your normal Codex installation or config:
+
+  ```powershell
+  $env:CODEX_E2E_BIN = 'C:\path\to\codex.exe'
+  .\.venv\Scripts\python.exe -m pytest tests/test_codex_hooks_e2e.py -q
+  ```
+
+  Repeat with the desktop's bundled executable and the terminal executable when changing packaging. Without `CODEX_E2E_BIN`, this test is skipped. It verifies backend discovery and registration; it does not trust or execute hooks or check the desktop UI. The test writes `codex-hooks-discovery.json` in its pytest temporary fixture directory.
 - If you change the symbol extractor (`scripts/extract.py`), run `python dev/compare.py <dir>` on real code before and after your change, and include both results in the pull request.
 
 ## Branches

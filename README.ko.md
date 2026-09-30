@@ -88,12 +88,13 @@ Codex나 다른 에이전트, 또는 Claude Code와 함께 지킬 규칙은 **�
   - Markdown에서는 제목과 해당 절의 시작·끝 줄을 인덱싱합니다.
   - CSS에서는 선택자와 `@media` 같은 규칙의 시작·끝 줄을 인덱싱합니다.
 
-이 플러그인은 [Agent Plugins](https://agent-plugins.org/) 규격(루트의 `plugin.json`)을 따릅니다. 그래서 Claude Code와 Codex에서 모두 쓸 수 있습니다.
+이 플러그인은 각 도구의 기본 플러그인 형식을 사용합니다. Codex는 `.codex-plugin/plugin.json`, Claude Code는 `.claude-plugin/plugin.json`을 읽으며, 두 도구가 스킬·스크립트·`hooks/hooks.json`을 공유합니다.
 
 ### Codex에서 쓸 때
 
-- `~/.codex/config.toml`에 `[features] hooks = true`를 켜세요.
-- 설치한 뒤 `/hooks`에서 이 플러그인의 훅을 한 번 신뢰(trust)해야 실행됩니다.
+- **0.6.0**은 루트의 Agent Plugins 형식으로 플러그인을 불러왔지만 훅은 누락됐습니다. 이 저장소의 **0.6.1**에서는 기본 플러그인 형식으로 바꿔 훅을 불러오도록 수정했습니다. 마켓플레이스 설치에 반영하려면 먼저 이 변경을 배포해야 합니다. [이슈 #4](https://github.com/j-token/agent-librarian/issues/4)를 참고하세요.
+- 설치하거나 업데이트한 뒤 Codex를 재시작하고, `/hooks`에서 이 플러그인의 훅을 확인하고 신뢰(trust)해야 실행됩니다. 목록에는 `agent-librarian`의 `SessionStart`, `PostToolUse`, `Stop`이 표시되어야 합니다.
+- 검사한 Codex 실행 환경에서는 훅 기능이 기본으로 켜져 있습니다. 직접 끈 경우에만 `~/.codex/config.toml`의 `[features]`에서 `hooks`를 켜세요. 삭제된 `plugin_hooks` 설정을 바꿀 필요는 없습니다.
 - `/rebuild-library`는 실행 환경에서 하위 에이전트를 지원하면 같은 깊이의 폴더를 병렬로 처리할 수 있습니다. 각 깊이를 끝낸 뒤 부모 폴더로 올라갑니다.
 
 ## 사람을 위한 지침
@@ -123,7 +124,7 @@ codex plugin marketplace add j-token/agent-librarian
 codex plugin add agent-librarian@agent-librarian
 ```
 
-그다음 `~/.codex/config.toml`에 `[features] hooks = true`를 켜고, Codex를 실행해서 `/hooks`에서 이 플러그인의 훅을 신뢰(trust)하세요.
+Codex를 재시작한 뒤 `/hooks`에서 이 플러그인의 훅을 확인하고 신뢰(trust)하세요. 설치된 버전이 아직 0.6.0이면 0.6.1이 배포된 뒤 아래 업데이트 지침을 따르세요.
 
 설치가 끝나면 아래 명령어로 여러분을 위한 "도서관"을 지으세요.
 
@@ -152,7 +153,16 @@ codex plugin add agent-librarian@agent-librarian
 
 ### 플러그인을 업데이트한 뒤
 
-플러그인을 업데이트해도(`/plugin update`) 이미 만든 도서관은 바뀌지 않습니다. check 훅이 도서관이 예전 버전으로 만들어졌다고 알려 주면 `/update-library`를 실행하세요. 설정 항목을 현재 버전에 맞추고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고칩니다. 예전 버전으로 만든 도서관에는 관리지침 스킬(`librarian-guide`)이 있었습니다. `/update-library`(`/rebuild-library`도 마찬가지)는 그 스킬의 연결과 `.gitignore` 항목을 지우고, `.librarian/skills/librarian-guide`는 직접 추가한 내용을 옮긴 뒤 지우라고 알려 줍니다.
+**Codex**는 터미널에서 마켓플레이스를 갱신한 뒤 최신 배포 버전을 설치하세요.
+
+```bash
+codex plugin marketplace upgrade agent-librarian
+codex plugin add agent-librarian@agent-librarian
+```
+
+Codex를 재시작하고 `/hooks`에서 갱신된 훅을 확인하세요. **Claude Code**는 `/plugin update agent-librarian@agent-librarian`을 실행한 뒤 플러그인을 다시 불러오거나 Claude Code를 재시작하세요.
+
+플러그인을 업데이트해도 이미 만든 도서관은 바뀌지 않습니다. 업데이트한 뒤에는 `/update-library`를 실행하세요. check 훅도 도서관이 예전 버전으로 만들어졌으면 알려 줍니다. 이 스킬은 설정 항목을 현재 버전에 맞추고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고칩니다. 예전 버전으로 만든 도서관에는 관리지침 스킬(`librarian-guide`)이 있었습니다. `/update-library`(`/rebuild-library`도 마찬가지)는 그 스킬의 연결과 `.gitignore` 항목을 지우고, `.librarian/skills/librarian-guide`는 직접 추가한 내용을 옮긴 뒤 지우라고 알려 줍니다.
 
 ## 에이전트를 위한 지침
 
@@ -164,7 +174,7 @@ codex plugin add agent-librarian@agent-librarian
 2. 위 "설치"의 터미널 명령으로 플러그인을 설치합니다. Claude Code는 `claude plugin …` 명령을, Codex는 `codex plugin …` 명령을 씁니다.
 3. 에이전트가 직접 할 수 없어서 사용자에게 요청해야 하는 단계가 있습니다.
    - Claude Code에서 `/reload-plugins` 실행
-   - Codex에서 `[features] hooks = true` 설정, `/hooks`에서 이 플러그인의 훅 신뢰
+   - Codex 재시작, `/hooks`에서 이 플러그인의 훅 확인 및 신뢰
    - `/rebuild-library`(기존 코드베이스) 또는 `/build-library`(새 프로젝트) 실행. 이 스킬들은 모델이 호출할 수 없고, 도서관 언어 같은 질문을 사용자에게 합니다.
 4. `/rebuild-library`는 코드베이스 전체를 읽으므로 폴더 수에 비례해 토큰 비용이 든다고 사용자에게 알립니다.
 
