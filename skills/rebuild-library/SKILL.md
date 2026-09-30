@@ -24,17 +24,17 @@ python <plugin>/scripts/librarian.py scaffold
 python <plugin>/scripts/librarian.py index --all
 ```
 
-After this, every folder has a document and every index (file · function · start line · end line) is filled in. If the language changed, existing documents switch their generated headings to the new language, and the roles already written are kept.
+After this, every folder has a document and every index (file · function or Markdown heading or CSS rule · start line · end line) is filled in. If an index would exceed `maxDocLines` (default 200), it moves into `index.md` and, if needed, per-file indexes in `index/`. If the language changed, existing documents switch their generated headings to the new language, and roles and Notes already written are kept.
 
 ## 3. Fill in roles (deepest folders first)
 
 `python <plugin>/scripts/librarian.py pending` lists the folders whose roles are empty, deepest first. A parent can only summarize its children in one line once their roles exist, so **keep this order.**
 
-- **If you can use subagents** (Claude Code):
+- **If you can use subagents**:
   - Hand folders of the same depth to `folder-cataloger` agents in parallel, about 5–10 folders per agent.
   - Give each agent three things: its folder document paths, the rules file path `<plugin>/skills/rebuild-library/references/cataloger.md`, and the library language.
   - Finish one depth completely before moving to the next, shallower one.
-- **If you cannot use subagents** (Codex and others): read `references/cataloger.md` and fill in the folders yourself, one at a time, in the same order.
+- **If you cannot use subagents**: read `references/cataloger.md` and fill in the folders yourself, one at a time, in the same order.
 
 ## 4. Verify and report
 
@@ -45,6 +45,6 @@ python <plugin>/scripts/librarian.py check
 Report to the user:
 - How many documents were created
 - Any remaining `role needed` entries
-- Any folder depth warnings (`warning`). Do not restructure folders; only suggest it to the user.
+- Any folder depth or document length warnings (`warning`). Do not restructure folders; use the `rule-creator` skill to shorten long rules while keeping non-Claude and shared rules in root `AGENTS.md`.
 
 Then give the same wrap-up as step 5 of build-library.

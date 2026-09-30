@@ -37,8 +37,8 @@ python <plugin>/scripts/librarian.py init --language <answer 1> --doc <answer 2>
 python <plugin>/scripts/librarian.py scaffold
 ```
 
-- `init` creates `.librarian/config.json`. In a library built with an older version, it also removes the old rules skill links the same way `update` does (see `<plugin>/skills/update-library/SKILL.md`); pass any `warning` lines on to the user.
-- `scaffold` creates a skeleton document in every folder that lacks one.
+- `init` creates `.librarian/config.json`, including `maxDocLines` (the document line limit, default 200). In a library built with an older version, it also removes the old rules skill links the same way `update` does (see `<plugin>/skills/update-library/SKILL.md`); pass any `warning` lines on to the user.
+- `scaffold` creates a skeleton document in every folder that lacks one. Each document has a Notes section for human or agent context, separate from the generated index.
 
 ## 4. Fill in roles
 
@@ -50,6 +50,9 @@ If `python <plugin>/scripts/librarian.py pending` lists any folders, fill them i
 - Explain what happens from now on:
   - When a file is edited, a hook updates the index.
   - At the end of each turn, a check hook fixes documents that no longer match the code and asks the agent to fill in any folder whose role is empty or missing.
+  - At session start, a hook warns about folder documents and rule files longer than `maxDocLines`. `check` reports the same warnings.
+  - If an index would make a folder document too long, the script moves it into `index.md` and, if needed, per-file indexes in `index/`.
+  - Use `<plugin>/skills/rule-creator/SKILL.md` to place or shorten working rules. Put rules for Codex or both clients in root `AGENTS.md` Notes with their scope in the text; in `both` mode, leave the `CLAUDE.md` alias alone.
 - Tell Codex users two things:
   - `~/.codex/config.toml` needs `[features] hooks = true`.
   - Codex runs an installed plugin's hooks only after they are trusted once in `/hooks`.

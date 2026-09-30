@@ -18,13 +18,16 @@ This plugin makes AI follow the rules that humans built libraries on.
 
 ## What the library looks like
 
-Every folder has one document (`CLAUDE.md` or `AGENTS.md`).
+Every folder has one primary document (`CLAUDE.md` or `AGENTS.md`). In `both` mode, it also has a `CLAUDE.md` alias to `AGENTS.md`.
 
 ```markdown
 # Parent: ../CLAUDE.md
 
 ## What this folder is for
 Holds the billing and invoicing code.              ← written by an agent or a human
+
+## Notes
+Amounts are stored as integer cents.              ← written by an agent or a human
 
 ## Subfolders
 | Folder | Role |
@@ -40,23 +43,47 @@ Holds the billing and invoicing code.              ← written by an agent or a 
 
 The first thing the install commands ask is the **library language**: the language the folder documents are written in. English and Korean have built-in headings. Any other language is accepted too; the headings then stay in English and the roles are written in that language. You can change the language later by running `/rebuild-library` again. Roles that are already written are kept.
 
-- The root document describes only the role of each top-level folder. Each folder document describes only the folders directly beneath it.
-- A script generates the file, function, start line, and end line entries. An agent reads a function by opening the file from its start line to its end line, instead of guessing where the function ends. **The documents never describe what a function does.** This prevents hallucination, where an AI misreads a function and writes down a wrong description of it.
+- The root subfolder table describes only top-level folders. Each other subfolder table describes only the folders directly beneath it.
+- A script generates the file, symbol, start line, and end line entries. An agent reads the corresponding lines in the source file instead of guessing where an item ends. **The documents never describe what a function does.** This prevents hallucination, where an AI misreads a function and writes down a wrong description of it.
+- The Notes section holds context that the code alone does not explain. In a Claude-only library it can also hold folder working rules. An agent or a human writes it; the script preserves it.
 - When a file is edited, a hook updates the line numbers right away. At the end of every turn, a check hook fixes any mismatch between the documents and the code, and asks the agent to fill in any folder whose role is still empty.
+- At session start, a hook warns when a folder document or Markdown rule file is longer than `maxDocLines` lines. `check` reports the same warnings. The agent can use `rule-creator` to move long, human-written rules by topic; the script does not rewrite those rules.
 - The reasoning behind the design is written up in the [knowledge management research notes](docs/research/knowledge-management.md) (in Korean).
+
+### Long folders and progressive indexes
+
+`maxDocLines` defaults to 200. The generated index is split into levels when it would make a folder document too long:
+
+1. The folder's `CLAUDE.md` or `AGENTS.md` keeps its role, Notes, subfolder table, and a link to `index.md`.
+2. `index.md` holds the table. If it would also be too long, it holds links to per-file indexes instead.
+3. `index/` holds one generated index per source file when the second level is needed.
+
+The agent can read the folder document, then `index.md`, then only the file index it needs. The script joins the levels again when the index shrinks. The line limit triggers splitting, but a very long file index or list of file links can still exceed it at the final level; the script warns when that happens.
+
+The script overwrites or removes only files marked `<!-- librarian:generated -->`. A user-written `index.md`, or an `index/` directory containing user files or a symlink, blocks that split level and produces a warning. Do not edit the generated index block, `index.md`, or files in the generated `index/` folder.
 
 Installing the library adds the following to your project:
 
 ```
 .librarian/config.json                  # library language, document name, excluded paths, folder depth warning threshold (maxDepth),
-                                        # plugin version the library was built with (libraryVersion)
+                                        # document line limit (maxDocLines, default 200), plugin version (libraryVersion)
 <every folder>/CLAUDE.md or AGENTS.md   # the folder document
 ```
+
+## Rule-creator skill
+
+The `rule-creator` skill records a rule or a piece of missing context when a mistake is likely to recur. It finds the general situation behind a specific example, checks for an existing rule, and writes one actionable instruction with its reason.
+
+Rules for Codex, other non-Claude agents, or both clients go in the **project-root `AGENTS.md` Notes**, including rules about only one path or command. The rule itself states that scope. In `both` mode, `CLAUDE.md` remains an `@AGENTS.md` alias. A `CLAUDE.md`-only library can use a separate root `AGENTS.md` without changing its document mode. Claude-only rules can live in a folder's `CLAUDE.md` Notes or `.claude/rules/` with optional `paths` frontmatter. Claude Code's `.claude/rules/` path matching is not a Codex rule-loading feature.
+
+The length check covers root `AGENTS.md`, other managed folder documents' prose (excluding the generated index), and Markdown files under `.claude/rules/`. For long shared rules, the skill keeps the actionable rule in root `AGENTS.md` while shortening duplicates and moving lengthy supporting detail into ordinary documents with an explicit instruction to read them. The script warns; it does not rewrite human rules.
 
 ## Requirements
 
 - Python 3.9 or later. Nothing else to install: the index is built with the Python standard library only.
-- Supported languages: Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#
+- Supported languages: Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#, CSS, Markdown
+  - Markdown entries identify headings and the line range of each section.
+  - CSS entries identify selectors and at-rules, including `@media`, and their line ranges.
 
 This plugin follows the [Agent Plugins](https://agent-plugins.org/) specification (a `plugin.json` at the root), so it works in both Claude Code and Codex.
 
@@ -64,7 +91,7 @@ This plugin follows the [Agent Plugins](https://agent-plugins.org/) specificatio
 
 - Turn on `[features] hooks = true` in `~/.codex/config.toml`.
 - After installing, you must trust this plugin's hooks once in `/hooks` before they will run.
-- Codex has no subagent definitions, so when you run `/rebuild-library` the agent processes folders one at a time, in order.
+- `/rebuild-library` can process folders at the same depth in parallel when the agent runtime supports subagents. It completes each depth before moving to its parent.
 
 ## Instructions for humans
 
@@ -141,12 +168,14 @@ This section is for AI agents asked to install or use this plugin for a user.
 
 A project has a library if `.librarian/config.json` exists at its root. The hooks tell you when something needs your attention. The essentials:
 
-- Folder documents give each folder's role and, for code, only `file · function · start line · end line`. Before relying on anything, open the file and read it from the start line to the end line. Never infer what a function does from its name.
-- Never write what a function or file does, and never edit the `<!-- librarian:index:start/end -->` block. Hooks keep it up to date.
+- Folder documents give each folder's role and `file · symbol · start line · end line` entries. Before relying on anything, open the source and read the indicated range. Never infer what a function does from its name.
+- Never write what a function or file does, and never edit the `<!-- librarian:index:start/end -->` block or generated `index.md` and `index/` files. Hooks keep them up to date.
 - When you create a folder, fill in its role section and its role cell in the parent's subfolder table, in the library language (`language` in `.librarian/config.json`).
 - If the stop hook asks you to fill in empty roles, read the code and fill them in. Write about the folder's role only.
 - Look up reverse references (who calls what) with grep or LSP. They are not recorded in the documents.
 - If a hook warns that folders are nested too deep, tell the user. Do not restructure folders on your own.
+- If a hook warns that human-written document text is too long, use `rule-creator` to shorten and group it while preserving the rule's audience and scope.
+- To record a working rule for Codex or both clients, use `rule-creator` and write it in root `AGENTS.md` Notes with its path scope stated in the text. In `both` mode, leave the `CLAUDE.md` alias alone.
 - If the stop hook says the library was built with an older plugin version, ask the user to run `/update-library`. It cannot be invoked by a model.
 
 ## Contributing
