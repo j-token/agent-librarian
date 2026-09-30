@@ -85,12 +85,13 @@ The length check covers root `AGENTS.md`, other managed folder documents' prose 
   - Markdown entries identify headings and the line range of each section.
   - CSS entries identify selectors and at-rules, including `@media`, and their line ranges.
 
-This plugin follows the [Agent Plugins](https://agent-plugins.org/) specification (a `plugin.json` at the root), so it works in both Claude Code and Codex.
+This plugin uses each client's native plugin manifest: `.codex-plugin/plugin.json` for Codex and `.claude-plugin/plugin.json` for Claude Code. Both clients share the skills, scripts, and `hooks/hooks.json`.
 
 ### Using it with Codex
 
-- Turn on `[features] hooks = true` in `~/.codex/config.toml`.
-- After installing, you must trust this plugin's hooks once in `/hooks` before they will run.
+- The native manifest fixes the hook discovery problem in version **0.6.0**, whose root Agent Plugins manifest was discovered but its hooks were skipped. The fix is in **0.6.1** in this checkout; updating a marketplace installation requires that change to be published first. See [issue #4](https://github.com/j-token/agent-librarian/issues/4).
+- Restart Codex after installing or updating, then review and trust this plugin's hooks in `/hooks` before they run. The hook list should include `SessionStart`, `PostToolUse`, and `Stop` for `agent-librarian`.
+- Hooks are enabled by default in the tested Codex runtimes. If you explicitly disabled them, enable `hooks` in `[features]` in `~/.codex/config.toml`. Editing the removed `plugin_hooks` setting is not required.
 - `/rebuild-library` can process folders at the same depth in parallel when the agent runtime supports subagents. It completes each depth before moving to its parent.
 
 ## Instructions for humans
@@ -120,7 +121,7 @@ codex plugin marketplace add j-token/agent-librarian
 codex plugin add agent-librarian@agent-librarian
 ```
 
-Then turn on `[features] hooks = true` in `~/.codex/config.toml`, start Codex, and trust this plugin's hooks in `/hooks`.
+Restart Codex, then review and trust this plugin's hooks in `/hooks`. If the installed version is still 0.6.0, follow the update instructions below once 0.6.1 has been published.
 
 Once the plugin is installed, build your "library" with one of the commands below.
 
@@ -148,7 +149,16 @@ Once the plugin is installed, build your "library" with one of the commands belo
 
 ### After updating the plugin
 
-Updating the plugin (`/plugin update`) does not change a library that already exists. When the check hook says the library was built with an older version, run `/update-library`. It updates the config keys and rewrites every folder document in the current format while keeping the roles you wrote. Libraries built with older versions also had a rules skill (`librarian-guide`); `/update-library` (and `/rebuild-library`) removes its links and `.gitignore` entries, and tells you to delete `.librarian/skills/librarian-guide` yourself once you have kept anything you added there.
+For **Codex**, refresh the marketplace and install its latest published snapshot from a terminal:
+
+```bash
+codex plugin marketplace upgrade agent-librarian
+codex plugin add agent-librarian@agent-librarian
+```
+
+Restart Codex and review the updated hooks in `/hooks`. For **Claude Code**, use `/plugin update agent-librarian@agent-librarian`, then reload the plugins or restart Claude Code.
+
+Updating the plugin does not change a library that already exists. Run `/update-library` after updating the plugin; the check hook also reminds you if the library was built with an older version. The skill updates the config keys and rewrites every folder document in the current format while keeping the roles you wrote. Libraries built with older versions also had a rules skill (`librarian-guide`); `/update-library` (and `/rebuild-library`) removes its links and `.gitignore` entries, and tells you to delete `.librarian/skills/librarian-guide` yourself once you have kept anything you added there.
 
 ## Instructions for agents
 
@@ -160,7 +170,7 @@ This section is for AI agents asked to install or use this plugin for a user.
 2. Install the plugin with the terminal commands from "Install" above: the `claude plugin …` commands for Claude Code, or the `codex plugin …` commands for Codex.
 3. Some steps need the user and you cannot do them yourself. Ask the user to:
    - run `/reload-plugins` in Claude Code;
-   - in Codex, set `[features] hooks = true` and trust this plugin's hooks in `/hooks`;
+   - restart Codex and review and trust this plugin's hooks in `/hooks`;
    - run `/rebuild-library` (existing codebase) or `/build-library` (new project). These skills cannot be invoked by a model, and they ask the user questions such as the library language.
 4. Tell the user that `/rebuild-library` reads the whole codebase and costs tokens in proportion to the number of folders.
 

@@ -193,12 +193,16 @@ def _is_true(value) -> bool:
 
 
 def plugin_version() -> str | None:
-    """None when plugin.json is missing or unreadable, so callers can skip version checks."""
-    try:
-        version = json.loads(_read(PLUGIN_ROOT / "plugin.json") or "{}").get("version")
-    except (json.JSONDecodeError, AttributeError):
-        return None
-    return str(version) if version else None
+    """Read native metadata; skip version checks when neither manifest is usable."""
+    for manifest_dir in (".codex-plugin", ".claude-plugin"):
+        try:
+            version = json.loads(_read(PLUGIN_ROOT / manifest_dir / "plugin.json") or "{}").get(
+                "version")
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+            continue
+        if version:
+            return str(version)
+    return None
 
 
 def _version_tuple(version: str) -> tuple[int, ...] | None:
