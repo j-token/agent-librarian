@@ -11,6 +11,9 @@ of the declaration. Methods are prefixed with their container ("Class.method").
   while a scope stack tracks braces. A declaration with a body ends at the line of the `}`
   that closes it (the last line of the file when it is never closed); a declaration without
   a body ends at its terminating `;`, or at its last token when nothing terminates it.
+- Markdown lists headings; a section includes its subsections and ends before the next
+  heading of the same or a higher level.
+- CSS lists rule blocks by selector or at-rule header, including nested rule paths.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import re
 import warnings
 from bisect import bisect_right
 from pathlib import Path
+from typing import NamedTuple
 
 EXT_LANG = {
     ".py": "python",
@@ -31,6 +35,8 @@ EXT_LANG = {
     ".c": "c", ".h": "c",
     ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
     ".cs": "csharp",
+    ".md": "markdown",
+    ".css": "css",
 }
 JS_LANGS = {"javascript", "typescript", "tsx"}
 _CPP_HINT = re.compile(r"^\s*(?:namespace\s+\w|class\s+\w+\s*[:{]|template\s*<)|\w::\w", re.MULTILINE)
@@ -56,6 +62,10 @@ def extract_text(text: str, lang: str) -> list[tuple[str, int, int]]:
         text = text[1:]
     if lang == "python":
         return _python(text)
+    if lang == "markdown":
+        return _markdown(text)
+    if lang == "css":
+        return _css(text)
     if lang in ("c", "cpp", "csharp"):
         text = _first_branch_only(text, lang)
     return _Scanner(text, lang).run()
@@ -99,6 +109,16 @@ def _first_branch_only(text: str, lang: str) -> str:
     return "\n".join(lines)
 
 
+def _line_starts(text: str) -> list[int]:
+    """Offset at which each line of `text` starts."""
+    return [0] + [match.end() for match in re.finditer("\n", text)]
+
+
+def _line_of(line_starts: list[int], offset: int) -> int:
+    """1-based number of the line that holds `offset`."""
+    return bisect_right(line_starts, offset)
+
+
 # ---------------------------------------------------------------- Python
 
 
@@ -140,6 +160,187 @@ def _python(text: str) -> list[tuple[str, int, int]]:
 
     visit(tree.body, [])
     return out
+
+
+# ---------------------------------------------------------------- Markdown
+
+_MD_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)$")
+_MD_FENCE_CLOSE = re.compile(r" {0,3}(`+|~+)[ \t]*$")
+_MD_ATX = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+_MD_SETEXT_UNDERLINE = re.compile(r" {0,3}(=+|-+)[ \t]*$")
+_MD_NOT_PARAGRAPH = re.compile(
+    r"\s*$"                                  # blank
+    r"|(?: {4}|\t)"                          # indented code
+    r"|\s*>"                                 # block quote
+    r"|\s*(?:[-*+]|\d+[.)])(?:\s|$)"         # list item
+    r"|\s*([-*_])(?:\s*\1){2,}\s*$")         # thematic break
+
+
+def _markdown(text: str) -> list[tuple[str, int, int]]:
+    """List headings and the last content line of each section, including subsections."""
+    lines = text.split("\n")
+    out: list[list] = []  # [name, start, end]; end is filled when the section closes
+    open_sections: list[tuple[int, int]] = []  # (heading level, index in out)
+
+    for level, title, line in _markdown_headings(lines):
+        while open_sections and open_sections[-1][0] >= level:
+            _, section = open_sections.pop()
+            out[section][2] = _last_content_line(lines, line - 1)
+        out.append([f"{'#' * level} {title}".rstrip(), line, 0])
+        open_sections.append((level, len(out) - 1))
+
+    for _, section in open_sections:
+        out[section][2] = _last_content_line(lines, len(lines))
+    return [(name, start, end) for name, start, end in out]
+
+
+def _markdown_headings(lines: list[str]) -> list[tuple[int, str, int]]:
+    """ATX and setext headings outside code fences and leading front matter."""
+    headings: list[tuple[int, str, int]] = []
+    fence_char, fence_length = "", 0
+    index = _front_matter_length(lines)
+
+    while index < len(lines):
+        line = lines[index]
+        line_number = index + 1
+        index += 1
+
+        if fence_char:
+            closing = _MD_FENCE_CLOSE.fullmatch(line)
+            if closing:
+                marker = closing.group(1)
+                if marker[0] == fence_char and len(marker) >= fence_length:
+                    fence_char = ""
+            continue
+
+        opening = _MD_FENCE.match(line)
+        if opening:
+            # A backtick inside the info string means this is inline code, not a fence.
+            is_inline_code = opening.group(1)[0] == "`" and "`" in opening.group(2)
+            if not is_inline_code:
+                fence_char, fence_length = opening.group(1)[0], len(opening.group(1))
+                continue
+
+        atx = _MD_ATX.match(line)
+        if atx:
+            title = " ".join((atx.group(2) or "").split())
+            headings.append((len(atx.group(1)), title, line_number))
+            continue
+
+        underline = _MD_SETEXT_UNDERLINE.match(lines[index]) if index < len(lines) else None
+        if underline and not _MD_NOT_PARAGRAPH.match(line):
+            level = 1 if underline.group(1)[0] == "=" else 2
+            headings.append((level, " ".join(line.split()), line_number))
+            index += 1
+    return headings
+
+
+def _front_matter_length(lines: list[str]) -> int:
+    """Number of lines in a leading `---` ... `---` block, or zero."""
+    if lines[0].rstrip() != "---":
+        return 0
+    for index in range(1, len(lines)):
+        if lines[index].rstrip() == "---":
+            return index + 1
+    return 0
+
+
+def _last_content_line(lines: list[str], up_to: int) -> int:
+    """Last nonblank line among the first `up_to` lines, using 1-based numbering."""
+    while up_to > 1 and not lines[up_to - 1].strip():
+        up_to -= 1
+    return up_to
+
+
+# ---------------------------------------------------------------- CSS
+
+_CSS_LITERAL = re.compile(
+    r"/\*.*?(?:\*/|\Z)"                     # comment (unclosed: to end of file)
+    r"|\"(?:\\[\s\S]|[^\"\\\n])*\"?"        # string (unclosed: to end of line)
+    r"|'(?:\\[\s\S]|[^'\\\n])*'?"
+    r"|url\((?!\s*[\"'])[^)]*\)?",          # unquoted url(...)
+    re.DOTALL | re.IGNORECASE)
+_CSS_CUSTOM_PROPERTY = re.compile(r"--[^\s:{}]*\s*:")
+_CSS_AT_RULE = re.compile(r"@(?:-[a-z]+-)?([a-z][\w-]*)", re.IGNORECASE)
+_CSS_DECLARATION_ONLY_AT_RULES = {
+    "keyframes", "font-face", "page", "property", "counter-style", "font-palette-values",
+    "font-feature-values", "position-try", "view-transition", "color-profile"}
+
+
+class _CssBlock(NamedTuple):
+    symbol_index: int | None
+    full_name: str
+    hides_children: bool
+
+
+def _css(text: str) -> list[tuple[str, int, int]]:
+    """List CSS rule blocks, nesting selectors under their parent block's name."""
+    structure, readable = _css_mask(text)
+    line_starts = _line_starts(text)
+
+    symbols: list[list] = []  # [name, start, end], parents before children
+    blocks: list[_CssBlock] = []
+    custom_property_depth = 0
+    statement_start = 0
+
+    for delimiter in re.finditer(r"[{};]", structure):
+        brace = delimiter.group()
+
+        if custom_property_depth:
+            if brace == "{":
+                custom_property_depth += 1
+            elif brace == "}":
+                custom_property_depth -= 1
+                statement_start = delimiter.end()
+            continue
+
+        if brace == "{":
+            header = structure[statement_start:delimiter.start()]
+            if _CSS_CUSTOM_PROPERTY.match(header.lstrip()):
+                # Braces in an old-style custom property hold declarations, not rules.
+                custom_property_depth = 1
+                continue
+            header_offset = statement_start + len(header) - len(header.lstrip())
+            selector = " ".join(readable[statement_start:delimiter.start()].split())
+            parent_name, parent_hides_children = (
+                (blocks[-1].full_name, blocks[-1].hides_children) if blocks else ("", False))
+
+            if parent_hides_children:
+                blocks.append(_CssBlock(None, parent_name, True))
+            elif not selector:
+                blocks.append(_CssBlock(None, parent_name, False))
+            else:
+                full_name = f"{parent_name} > {selector}" if parent_name else selector
+                symbols.append([full_name, _line_of(line_starts, header_offset), 0])
+                blocks.append(_CssBlock(len(symbols) - 1, full_name, _hides_children(selector)))
+        elif brace == "}" and blocks:
+            symbol_index = blocks.pop().symbol_index
+            if symbol_index is not None:
+                symbols[symbol_index][2] = _line_of(line_starts, delimiter.start())
+
+        statement_start = delimiter.end()
+
+    last_line = text.rstrip().count("\n") + 1
+    for block in blocks:
+        if block.symbol_index is not None:
+            symbols[block.symbol_index][2] = last_line
+    return [(name, start, end) for name, start, end in symbols]
+
+
+def _css_mask(text: str) -> tuple[str, str]:
+    """Blank literals for structure and comments for readable selector text."""
+    def blank(match: re.Match) -> str:
+        return re.sub(r"[^\n]", " ", match.group())
+
+    def blank_comment(match: re.Match) -> str:
+        return blank(match) if match.group().startswith("/*") else match.group()
+
+    return _CSS_LITERAL.sub(blank, text), _CSS_LITERAL.sub(blank_comment, text)
+
+
+def _hides_children(selector: str) -> bool:
+    at_rule = _CSS_AT_RULE.match(selector)
+    return bool(at_rule) and at_rule.group(1).lower() in _CSS_DECLARATION_ONLY_AT_RULES
 
 
 # ---------------------------------------------------------------- masking

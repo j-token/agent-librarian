@@ -751,3 +751,137 @@ def test_end_lines_nested_bodies():
 def test_end_line_of_unclosed_body_is_last_line():
     src = "function open() {\n  work()\n\n"
     assert names(src, "javascript") == [("open", 1, 2)]
+
+
+# ---------------------------------------------------------------- Markdown
+
+
+def test_markdown_sections_include_subsections_and_trim_trailing_blanks():
+    src = (
+        "# Guide\n\nIntro.\n\n"
+        "## Install\nRun it.\n\n"
+        "### From source\nmake install\n\n"
+        "## Usage ##\nCall it.\n\n"
+        "# Appendix\nNotes.\n\n"
+    )
+    assert names(src, "markdown") == [
+        ("# Guide", 1, 12), ("## Install", 5, 9), ("### From source", 8, 9),
+        ("## Usage", 11, 12), ("# Appendix", 14, 15)]
+
+
+def test_markdown_setext_headings_and_inline_markup():
+    src = "Project\n=======\n\n###  The `run`   *command*\nText\n\nDetails\n-------\nBody\n"
+    assert names(src, "markdown") == [
+        ("# Project", 1, 9), ("### The `run` *command*", 4, 5), ("## Details", 7, 9)]
+
+
+def test_markdown_skips_front_matter_and_fenced_code():
+    src = (
+        "---\ntitle: Doc\n# yaml comment\n---\n"
+        "# Real\n```bash\n# hidden\n```\n"
+        "~~~~\n## also hidden\n~~~\nTitle\n---\n~~~~\n"
+        "## After\n"
+    )
+    assert names(src, "markdown") == [("# Real", 5, 15), ("## After", 15, 15)]
+
+
+def test_markdown_unclosed_fence_and_no_headings():
+    assert names("# Top\n```\n## hidden\n", "markdown") == [("# Top", 1, 3)]
+    assert names("Just a paragraph.\n\n- item\n\n---\n", "markdown") == []
+    assert names("#hashtag is not a heading\n    ## indented code\n", "markdown") == []
+    assert names("", "markdown") == []
+
+
+@pytest.mark.parametrize("indent", ["    ", "\t"])
+def test_markdown_indented_backticks_do_not_open_a_fence(indent):
+    src = f"# A\n{indent}```\n## B\n"
+    assert names(src, "markdown") == [("# A", 1, 3), ("## B", 3, 3)]
+
+
+@pytest.mark.parametrize("indent", ["    ", "\t"])
+def test_markdown_indented_backticks_do_not_close_a_fence(indent):
+    src = f"# A\n```\n{indent}```\n## hidden\n```\n## B\n"
+    assert names(src, "markdown") == [("# A", 1, 6), ("## B", 6, 6)]
+
+
+def test_markdown_three_space_fences_still_hide_headings():
+    src = "# A\n   ```\n## hidden\n   ``` \t\n## B\n"
+    assert names(src, "markdown") == [("# A", 1, 5), ("## B", 5, 5)]
+
+
+def test_markdown_file_dispatch_normalizes_bom_and_crlf(tmp_path):
+    file = tmp_path / "README.MD"
+    file.write_bytes("\ufeff# 제목\r\n\r\n본문\r\n".encode("utf-8"))
+    assert extract_symbols(file) == [("# 제목", 1, 3)]
+
+
+# ---------------------------------------------------------------- CSS
+
+
+def test_css_selectors_and_nested_at_rules_have_inclusive_ranges():
+    src = (
+        ":root { --gap: 4px; }\n"
+        "@media (max-width: 600px) {\n"
+        "  .card > .title,\n"
+        "  h2.title { color: red; }\n"
+        "  .card:hover { color: blue; }\n"
+        "}\n"
+        ".menu {\n"
+        "  &:hover { color: gray; }\n"
+        "}\n"
+    )
+    assert names(src, "css") == [
+        (":root", 1, 1),
+        ("@media (max-width: 600px)", 2, 6),
+        ("@media (max-width: 600px) > .card > .title, h2.title", 3, 4),
+        ("@media (max-width: 600px) > .card:hover", 5, 5),
+        (".menu", 7, 9), (".menu > &:hover", 8, 8)]
+
+
+def test_css_declaration_only_at_rules_hide_children():
+    src = (
+        "@font-face { font-family: X; src: url(x.woff2); }\n"
+        "@keyframes spin {\n  from { opacity: 0 }\n  to { opacity: 1 }\n}\n"
+        "@supports (display: grid) {\n"
+        "  @-webkit-keyframes pulse { to { opacity: 0 } }\n"
+        "  .grid { display: grid }\n"
+        "}\n"
+    )
+    assert names(src, "css") == [
+        ("@font-face", 1, 1), ("@keyframes spin", 2, 5),
+        ("@supports (display: grid)", 6, 9),
+        ("@supports (display: grid) > @-webkit-keyframes pulse", 7, 7),
+        ("@supports (display: grid) > .grid", 8, 8)]
+
+
+def test_css_comments_strings_urls_and_custom_properties_do_not_open_rules():
+    src = (
+        "/* .ghost { */\n"
+        ".a::after { content: \"}\"; }\n"
+        ".b { background: url(data:image/svg+xml;utf8,<svg>{</svg>); }\n"
+        ".c /* inline { */ .d { content: '{' }\n"
+        ":root { --json: { \"a\": { \"b\": 1 } }; }\n"
+        ".after { color: red }\n"
+    )
+    assert names(src, "css") == [
+        (".a::after", 2, 2), (".b", 3, 3), (".c .d", 4, 4),
+        (":root", 5, 5), (".after", 6, 6)]
+
+
+@pytest.mark.parametrize("src,expected", [
+    ("@media screen {\n  .a {\n", [("@media screen", 1, 2), ("@media screen > .a", 2, 2)]),
+    ("} } .a { }\n}\n", [(".a", 1, 1)]),
+    ("{ } .a { }\n", [(".a", 1, 1)]),
+    ("/* never closed\n.a { }\n", []),
+    (".a { content: \"open\n}\n.b { }\n", [(".a", 1, 2), (".b", 3, 3)]),
+    ("--x: {\n.a { }\n", []),
+    ("", []),
+])
+def test_css_malformed_input_has_stable_ranges(src, expected):
+    assert names(src, "css") == expected
+
+
+def test_css_file_dispatch_normalizes_crlf(tmp_path):
+    file = tmp_path / "site.CSS"
+    file.write_bytes(b".a {\r\n  color: red;\r\n}\r\n")
+    assert extract_symbols(file) == [(".a", 1, 3)]
