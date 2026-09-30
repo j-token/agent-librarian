@@ -108,7 +108,8 @@ def hook(event, payload):
 
 @pytest.mark.parametrize("rel,expected", [
     ("src/auth/auth.py", [("Session", 3, 6), ("Session.refresh", 4, 6), ("login", 9, 10)]),
-    ("src/api/svc.ts", [("Svc", 1, 3), ("Svc.run", 2, 2), ("handler", 4, 4)]),
+    ("src/api/svc.ts", [("Svc", 1, 3), ("Svc.run", 2, 2), ("handler", 4, 4),
+                        ("describe('x')", 5, 5), ("it('y')", 5, 5)]),
     ("web/main.go", [("S", 3, 3), ("S.Do", 5, 5), ("Top", 7, 7)]),
     ("native/lib.cpp", [("C", 2, 2), ("C::m", 3, 3), ("make", 5, 5)]),
     ("native/lib.rs", [("P", 1, 1), ("P", 2, 4), ("P.new", 3, 3), ("main", 5, 5)]),
@@ -126,6 +127,36 @@ def test_scaffold_indexes_symbols_with_line_ranges(project, rel, expected):
 
 
 # ---------------------------------------------------------------- scaffold / index
+
+
+def test_agents_index_generates_and_refreshes_anonymous_test_rows(project):
+    source = project / "src/api/callbacks.spec.ts"
+    source.write_text(
+        "test('한국어 | 테스트', async ({ game }) => {\n"
+        "  await game.run();\n"
+        "});\n"
+        "it('second', function () {\n"
+        "  run();\n"
+        "});\n"
+        "const runTest = async () => {};\n", encoding="utf-8")
+
+    init(project, doc="AGENTS.md", language="ko")
+
+    doc = source.parent / "AGENTS.md"
+    text = doc.read_text(encoding="utf-8")
+    assert "| callbacks.spec.ts | test('한국어 \\| 테스트') | 1 | 3 |" in text
+    assert "| callbacks.spec.ts | it('second') | 4 | 6 |" in text
+    assert "| callbacks.spec.ts | runTest | 7 | 7 |" in text
+    assert "| callbacks.spec.ts | - | - | - |" not in text
+
+    source.write_text("\n" + source.read_text(encoding="utf-8"), encoding="utf-8")
+    run(project, "index", str(source.parent))
+    updated = doc.read_text(encoding="utf-8")
+    assert "| callbacks.spec.ts | test('한국어 \\| 테스트') | 2 | 4 |" in updated
+    assert "| callbacks.spec.ts | it('second') | 5 | 7 |" in updated
+    assert "| callbacks.spec.ts | runTest | 8 | 8 |" in updated
+    run(project, "index", str(source.parent))
+    assert doc.read_text(encoding="utf-8") == updated
 
 
 def test_scaffold_creates_hierarchy(project):

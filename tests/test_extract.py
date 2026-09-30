@@ -87,6 +87,143 @@ def test_js_asi_and_arrows():
     assert names(src, "javascript") == [("f", 4, 4), ("h", 5, 5), ("k", 6, 8), ("g", 10, 10)]
 
 
+@pytest.mark.parametrize("lang", ["javascript", "typescript", "tsx"])
+def test_js_test_callbacks_have_titles_and_exact_body_ranges(lang):
+    src = (
+        "test('한국어 테스트', async ({\n"
+        "  game\n"
+        "}) => {\n"
+        "  const ignored = () => {};\n"
+        "  if (game) { game.run({ value: '}' }); }\n"
+        "});\n"
+        "it(\n"
+        '  "second test",\n'
+        "  function (done) {\n"
+        "    done();\n"
+        "  }\n"
+        ");\n"
+        "test(`static title`, async function () {\n"
+        "  await run();\n"
+        "});\n"
+        "const runTest = async () => {\n"
+        "  await run();\n"
+        "};\n"
+        "function named() {}\n"
+    )
+    assert names(src, lang) == [
+        ("test('한국어 테스트')", 1, 6), ('it("second test")', 7, 11),
+        ("test(`static title`)", 13, 15), ("runTest", 16, 18), ("named", 19, 19)]
+
+
+@pytest.mark.parametrize("callee", [
+    "test", "it", "test.only", "test.skip", "test.fixme", "test.fail", "it.fails",
+    "test.concurrent.only", "it.sequential.skip"])
+def test_js_test_modifiers_keep_the_callee_and_title(callee):
+    assert names(f"{callee}('case', () => {{\n  run();\n}});\n", "javascript") == [
+        (f"{callee}('case')", 1, 3)]
+
+
+@pytest.mark.parametrize("callee", [
+    "describe", "describe.only", "describe.skip", "describe.concurrent",
+    "describe.sequential", "test.describe", "test.describe.serial.only", "test.describe.parallel"])
+def test_js_suites_expose_nested_tests_and_close_at_their_own_brace(callee):
+    src = (
+        f"{callee}('suite', () => {{\n"
+        "  describe('nested', function () {\n"
+        "    it('one', () => { run(); });\n"
+        "  });\n"
+        "  test('two', async () => {\n"
+        "    await run();\n"
+        "  });\n"
+        "});\n"
+        "function after() {}\n"
+    )
+    assert names(src, "typescript") == [
+        (f"{callee}('suite')", 1, 8), ("describe('nested')", 2, 4),
+        ("it('one')", 3, 3), ("test('two')", 5, 7), ("after", 9, 9)]
+
+
+def test_ts_test_details_comments_and_callback_types_keep_body_ranges():
+    src = (
+        "test /* before title */ (\n"
+        "  /* title */ 'typed', /* details */\n"
+        "  { tag: ['@smoke'], annotation: { type: 'issue' } },\n"
+        "  async ({ game }: { game: Game }): Promise<void> => {\n"
+        "    await game.run();\n"
+        "  },\n"
+        ");\n"
+        "test('plain', done => { done(); }, 1000);\n"
+    )
+    assert names(src, "typescript") == [
+        ("test('typed')", 1, 6), ("test('plain')", 8, 8)]
+
+
+@pytest.mark.parametrize("lang", ["typescript", "tsx"])
+@pytest.mark.parametrize("signature", [
+    "function (): void", "async function (): Promise<void>",
+    "function (): { value: number }", "async function (): Promise<{ value: number }>",
+    "function (): { value: number } | { error: string }"])
+def test_ts_test_function_return_annotations_do_not_open_the_callback_early(lang, signature):
+    src = (
+        f"test('typed function', {signature} {{\n"
+        "  run();\n"
+        "});\n"
+        "function after() {}\n"
+    )
+    assert names(src, lang) == [
+        ("test('typed function')", 1, 3), ("after", 4, 4)]
+
+
+@pytest.mark.parametrize("src", [
+    "run('ordinary', () => {});",
+    "testName('ordinary', () => {});",
+    "obj.test('ordinary', () => {});",
+    "obj.describe('ordinary', () => { test('hidden', () => {}); });",
+    "run(test('nested argument', () => {}));",
+    "test.beforeEach('setup', () => {});",
+    "test.describe.configure('settings', () => {});",
+    "test.unknown('ordinary', () => {});",
+    "test.skip(true, 'reason');",
+    "test(title, () => {});",
+    "test('prefix' + suffix, () => {});",
+    "test(`${title}`, () => {});",
+    "test('callback reference', callback);",
+    "test('computed callback', makeCallback(() => {}));",
+    "test('named callback', function named() {});",
+    "test.each([1, 2])('parameterized', () => {});",
+    "test('expression body', () => run());",
+    "// test('comment', () => {})\n/* it('comment', () => {}) */",
+    'const example = "test(\'string\', () => {})";',
+])
+def test_js_ordinary_callbacks_and_unsupported_test_forms_are_not_indexed(src):
+    assert names(src + "\nfunction after() {}\n", "javascript") == [
+        ("after", src.count("\n") + 2, src.count("\n") + 2)]
+
+
+def test_js_test_title_escapes_do_not_change_callback_brace_matching():
+    src = r'''test('it\'s { escaped }', () => {});''' + "\n"
+    assert names(src, "javascript") == [(r"test('it\'s { escaped }')", 1, 1)]
+
+
+def test_js_multiline_test_callee_and_literal_preserve_the_title_and_call_start():
+    src = (
+        "test\n"
+        "  .only\n"
+        "  (\n"
+        "    'keeps  two spaces',\n"
+        "    () => {\n"
+        "      run();\n"
+        "    }\n"
+        "  );\n"
+        "it\n"
+        "(\n"
+        "  `multiple\n"
+        "lines`, () => {});\n"
+    )
+    assert names(src, "typescript") == [
+        ("test.only('keeps  two spaces')", 1, 7), ("it(`multiple lines`)", 9, 12)]
+
+
 def test_js_classes_and_objects():
     src = (
         "export default class Store extends Base {\n"

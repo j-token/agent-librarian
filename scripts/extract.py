@@ -3,6 +3,8 @@
 extract_symbols(path) returns [(name, start_line, end_line)] with 1-based, inclusive lines.
 The start line is the line that holds the declaration's name; the end line is the last line
 of the declaration. Methods are prefixed with their container ("Class.method").
+JS/TS test callbacks use the call and literal title as their name, start at the callee,
+and end at the callback's closing brace. Suite callbacks also expose their children.
 
 - Python uses the standard `ast` module (end line: the node's end_lineno).
 - Brace languages (JS/TS, Go, Rust, Java, C#, C, C++) use a small scanner: comments and
@@ -910,8 +912,8 @@ class _Scanner:
     def line(self, pos: int) -> int:
         return bisect_right(self.line_starts, pos)
 
-    def span(self, h, a: int, b: int) -> str:
-        """Source text of tokens h[a:b] with whitespace collapsed."""
+    def span(self, h, a: int, b: int, collapse_whitespace: bool = True) -> str:
+        """Source text of tokens h[a:b], omitting comments."""
         if a >= b:
             return ""
         lo, hi = h[a][ST], h[b - 1][EN]
@@ -925,7 +927,8 @@ class _Scanner:
                 pos = max(pos, c1)
             k += 1
         parts.append(self.src[pos:hi] if pos < hi else "")
-        return re.sub(r"\s+", " ", "".join(parts)).strip()
+        text = "".join(parts).strip()
+        return re.sub(r"\s+", " ", text) if collapse_whitespace else text
 
     def push(self, kind: str, **kw) -> None:
         self.stack.append(_Scope(kind, self.stack[-1], **kw))
@@ -966,7 +969,7 @@ class _Scanner:
                 elif s == "}":
                     if top.nest == 0:
                         self.pop_scope(tok[LN])
-                        if top.kind == "inline":
+                        if top.saved is not None:
                             header, pdepth = top.saved
                             header.append(("{}", tok[LN], tok[ST], tok[EN]))
                         else:
@@ -994,7 +997,13 @@ class _Scanner:
                 continue
 
             if s == "{":
-                if pdepth > 0 or self.inline_brace(header, tok):
+                test_callback = self._js_test_callback(header, tok) if self.lang in JS_LANGS else None
+                if test_callback:
+                    name, line, is_suite = test_callback
+                    symbol_index = self.emit(name, line, line)
+                    self.push("transparent" if is_suite else "func",
+                              saved=(header, pdepth), symbol_index=symbol_index)
+                elif pdepth > 0 or self.inline_brace(header, tok):
                     self.push("inline", saved=(header, pdepth))
                 else:
                     self.open_block(header)
@@ -1004,6 +1013,9 @@ class _Scanner:
                 header, pdepth = [], 0
                 if len(self.stack) > 1:
                     self.pop_scope(tok[LN])
+                    if top.saved is not None:
+                        header, pdepth = top.saved
+                        header.append(("{}", tok[LN], tok[ST], tok[EN]))
             elif s == ";" and pdepth == 0:
                 self.bodiless(header, tok[LN])
                 header = []
@@ -1043,6 +1055,8 @@ class _Scanner:
             return (_is_ident(last) and last not in ("func", "type", "struct", "interface",
                                                      "map", "chan")) \
                 or last[:1].isdigit() or last in (")", "]", "{}", "}")
+        if nxt == "(" and self._js_test_callee(header) is not None:
+            return False  # a test callee and its arguments can start on separate lines
         if last in self._JS_CONT_END or nxt in self._JS_CONT_START:
             return False
         before = header[-2][T] if len(header) > 1 else ""
@@ -1140,6 +1154,68 @@ class _Scanner:
                 "override", "abstract", "declare", "accessor", "*"}
     _JS_CONTROL = {"if", "else", "for", "while", "do", "try", "catch", "finally", "switch",
                    "with", "case", "default"}
+    _JS_TEST_MODIFIERS = {"only", "skip", "fixme", "fail", "fails", "concurrent", "sequential"}
+    _JS_SUITE_MODIFIERS = {"only", "skip", "serial", "parallel", "concurrent", "sequential"}
+    _JS_TEST_TITLE = re.compile(
+        r'''"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'|'''
+        r'''`(?:\\[\s\S]|[^`\\$]|\$(?!\{))*`''')
+
+    def _js_test_callee(self, h):
+        """Return the end of an allowlisted test callee and whether it is a suite."""
+        if not h or h[0][T] not in ("test", "it", "describe"):
+            return None
+        is_suite = h[0][T] == "describe"
+        p = 1
+        if h[0][T] == "test" and len(h) > 2 and [x[T] for x in h[1:3]] == [".", "describe"]:
+            is_suite = True
+            p = 3
+        modifiers = self._JS_SUITE_MODIFIERS if is_suite else self._JS_TEST_MODIFIERS
+        while p + 1 < len(h) and h[p][T] == "." and h[p + 1][T] in modifiers:
+            p += 2
+        return (p, is_suite) if p == len(h) or h[p][T] == "(" else None
+
+    def _js_test_callback(self, h, tok):
+        """Recognize a literal-titled test/suite call immediately before its callback body.
+
+        Requiring the entire header to be a known callee and direct arguments avoids
+        treating object methods, nested calls, and arbitrary callbacks as tests.
+        """
+        callee_info = self._js_test_callee(h)
+        if callee_info is None:
+            return None
+        p, is_suite = callee_info
+        if p + 1 >= len(h) or h[p][T] != "(" or h[p + 1][T] != ",":
+            return None
+        # Literals are masked out of the token stream; recover only the first argument.
+        title = self.span(h, p, p + 2, collapse_whitespace=False)[1:-1].strip()
+        if not self._JS_TEST_TITLE.fullmatch(title):
+            return None
+        callback = h[p + 2:]
+        # Playwright also accepts test(title, details, callback).
+        if len(callback) >= 2 and [x[T] for x in callback[:2]] == ["{}", ","]:
+            callback = callback[2:]
+        if callback and callback[0][T] == "async":
+            callback = callback[1:]
+        if not callback:
+            return None
+        if callback[0][T] == "function":
+            callback = callback[1:]
+            if not callback or callback[0][T] != "(":
+                return None  # only anonymous function expressions
+            end = _close_index(callback, 0, "(", ")")
+            rest = callback[end + 1:] if end >= 0 else []
+            has_return_type = (self.lang in ("typescript", "tsx") and len(rest) > 1
+                               and rest[0][T] == ":" and not self.inline_brace(callback, tok))
+            valid_callback = end >= 0 and (not rest or has_return_type)
+        else:
+            # Reuse the existing arrow recognizer, including TS parameter/return types.
+            declaration = [("const", 0, 0, 0), ("callback", 0, 0, 0), ("=", 0, 0, 0)]
+            valid_callback = (callback[-1][T] == "=>"
+                              and self._js_arrow_name(declaration + callback, 0) is not None)
+        if not valid_callback:
+            return None
+        callee = "".join(tok[T] for tok in h[:p])
+        return f"{callee}({' '.join(title.splitlines())})", h[0][LN], is_suite
 
     def _js_decorators(self, h):
         return _strip_groups(h, "@", "(", ")")
