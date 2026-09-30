@@ -174,8 +174,14 @@ def _read_config(path: Path) -> dict:
 def _write_config(root: Path, cfg: dict) -> Path:
     path = root / CONFIG_DIR / CONFIG_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_utf8(path, json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
     return path
+
+
+def _write_utf8(path: Path, text: str) -> None:
+    """Write LF-delimited UTF-8 text with the Python 3.9-compatible Path.open API."""
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
 
 
 def _is_true(value) -> bool:
@@ -608,7 +614,7 @@ def sync_generated_files(lib: Library, d: Path, wanted: dict[Path, str], fix: bo
             if not _path_is_free_for_generated_file(path):
                 raise FileExistsError(f"refusing to overwrite human-owned index: {path}")
             path.parent.mkdir(exist_ok=True)
-            path.write_text(text, encoding="utf-8", newline="\n")
+            _write_utf8(path, text)
 
     stale = [p for p in [d / INDEX_FILE_NAME, *_per_file_index_paths(d)]
              if p not in wanted and _is_generated_file(p)]
@@ -655,8 +661,8 @@ def migrate_doc(lib: Library, d: Path) -> str | None:
                         "sections; review and merge their human-written instructions manually")
             # A user may have written shared rules in root AGENTS.md before enabling both.
             # Store both bodies in the new primary document before replacing CLAUDE.md.
-            agents.write_text(c.rstrip("\n") + "\n\n" + a, encoding="utf-8", newline="\n")
-            claude.write_text(ALIAS + "\n", encoding="utf-8", newline="\n")
+            _write_utf8(agents, c.rstrip("\n") + "\n\n" + a)
+            _write_utf8(claude, ALIAS + "\n")
     elif a is not None and _is_librarian_doc(a) and (c is None or c.strip() == ALIAS):
         agents.replace(claude)
     return None
@@ -713,13 +719,13 @@ def sync_dir(lib: Library, d: Path, files: list[Path], children: list[Path], fix
         else:
             (report.updated if fix else report.drift).append(rel)
         if fix:
-            doc.write_text(rendered, encoding="utf-8", newline="\n")
+            _write_utf8(doc, rendered)
     if fix:
         remove_stale_index_files(lib, d, stale_index_files, report)
     if fix and lib.doc_mode == "both":
         alias = d / "CLAUDE.md"
         if not alias.is_file():
-            alias.write_text(ALIAS + "\n", encoding="utf-8", newline="\n")
+            _write_utf8(alias, ALIAS + "\n")
 
     if _role_is_empty(sec["role"]) or any(not r or r in PLACEHOLDERS for _, r in subdirs):
         report.pending.append(rel)
