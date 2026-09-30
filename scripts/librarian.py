@@ -18,6 +18,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # hooks load this file via runpy
 from extract import EXT_LANG, extract_symbols  # noqa: E402
@@ -28,6 +29,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 INDEX_START = "<!-- librarian:index:start -->"
 INDEX_END = "<!-- librarian:index:end -->"
+GENERATED_MARKER = "<!-- librarian:generated -->"
+INDEX_FILE_NAME = "index.md"
+INDEX_DIR_NAME = "index"
+IndexRow = tuple[str, str, str, str]  # file, symbol, start line, end line
 
 # Generated document text per library language. Languages without an entry use English
 # headings; the role text itself is still written in the configured language.
@@ -35,21 +40,26 @@ DOC_STRINGS = {
     "en": {
         "parent": "# Parent: ../{doc}",
         "role": "## What this folder is for",
+        "notes": "## Notes",
         "subdirs": "## Subfolders",
         "placeholder": "_(to be written)_",
         "subdir_header": ("Folder", "Role"),
         "index_header": ("File", "Function", "Start", "End"),
+        "index_link": "[Index]({index_file})",
     },
     "ko": {
         "parent": "# 상위 문서: ../{doc}",
         "role": "## 이 폴더의 역할",
+        "notes": "## 메모",
         "subdirs": "## 하위 폴더",
         "placeholder": "_(작성 필요)_",
         "subdir_header": ("폴더", "역할"),
         "index_header": ("파일", "함수", "시작 줄", "끝 줄"),
+        "index_link": "[색인]({index_file})",
     },
 }
 ROLE_HEADINGS = {s["role"] for s in DOC_STRINGS.values()}
+NOTES_HEADINGS = {s["notes"] for s in DOC_STRINGS.values()}
 SUBDIR_HEADINGS = {s["subdirs"] for s in DOC_STRINGS.values()}
 PLACEHOLDERS = {s["placeholder"] for s in DOC_STRINGS.values()}
 # The line older versions wrote in the root document to point at the removed rules skill.
@@ -87,7 +97,9 @@ DEFAULT_CONFIG = {
     "docName": "CLAUDE.md",
     "exclude": [],
     "maxDepth": 6,
+    "maxDocLines": 200,
 }
+CLAUDE_RULES_DIR = Path(".claude") / "rules"
 
 # ---------------------------------------------------------------- config / paths
 
@@ -149,20 +161,27 @@ def _read_config(path: Path) -> dict:
         cfg.update(json.loads(path.read_text(encoding="utf-8-sig")))  # tolerate a BOM
     for key in REMOVED_CONFIG_KEYS:
         cfg.pop(key, None)
-    try:
-        cfg["maxDepth"] = int(cfg["maxDepth"])
-    except (TypeError, ValueError):
-        cfg["maxDepth"] = DEFAULT_CONFIG["maxDepth"]
-    if cfg["maxDepth"] < 1:
-        cfg["maxDepth"] = DEFAULT_CONFIG["maxDepth"]
+    for key in ("maxDepth", "maxDocLines"):
+        try:
+            cfg[key] = int(cfg[key])
+        except (TypeError, ValueError):
+            cfg[key] = DEFAULT_CONFIG[key]
+        if cfg[key] < 1:
+            cfg[key] = DEFAULT_CONFIG[key]
     return cfg
 
 
 def _write_config(root: Path, cfg: dict) -> Path:
     path = root / CONFIG_DIR / CONFIG_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_utf8(path, json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
     return path
+
+
+def _write_utf8(path: Path, text: str) -> None:
+    """Write LF-delimited UTF-8 text with the Python 3.9-compatible Path.open API."""
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
 
 
 def _is_true(value) -> bool:
@@ -235,8 +254,25 @@ def list_files(lib: Library) -> list[Path]:
             continue
         p = lib.root / r
         if p.is_file():
+            if _may_be_generated_name(parts) and _is_generated_file(p):
+                continue
             files.append(p)
     return files
+
+
+def _may_be_generated_name(rel_parts: tuple[str, ...]) -> bool:
+    return rel_parts[-1] == INDEX_FILE_NAME or (len(rel_parts) >= 2 and rel_parts[-2] == INDEX_DIR_NAME)
+
+
+def _is_generated_file(path: Path) -> bool:
+    if _is_link(path) or not path.is_file():
+        return False
+    try:
+        with path.open("rb") as handle:
+            first_line = handle.readline(len(GENERATED_MARKER) + 16)
+    except OSError:
+        return False
+    return first_line.decode("utf-8-sig", "replace").strip() == GENERATED_MARKER
 
 
 def managed_dirs(lib: Library, files: list[Path]) -> set[Path]:
@@ -253,6 +289,10 @@ def _escape(cell: str) -> str:
     return cell.replace("|", "\\|")
 
 
+def _escape_link_label(label: str) -> str:
+    return label.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
 # ---------------------------------------------------------------- documents
 
 
@@ -260,14 +300,15 @@ _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def _split_sections(text: str) -> dict:
-    """Split a document into head / role / subdirs / index / tail.
+    """Split a document into head / role / notes / subdirs / index / tail.
 
     Lines inside code fences are plain text: they never start a section, and an index
     marker counts only when a matching end marker follows it.
     """
     lines = text.splitlines()
     fenced = _fenced_lines(lines)
-    sections = {"head": [], "role": None, "subdirs": None, "index": None, "tail": []}
+    sections = {"head": [], "role": None, "notes": None, "subdirs": None,
+                "index": None, "tail": []}
     cur = "head"
     i = 0
     while i < len(lines):
@@ -292,11 +333,14 @@ def _split_sections(text: str) -> dict:
         if stripped in ROLE_HEADINGS and sections["role"] is None:
             sections["role"] = []
             cur = "role"
+        elif stripped in NOTES_HEADINGS and sections["notes"] is None:
+            sections["notes"] = []
+            cur = "notes"
         elif stripped in SUBDIR_HEADINGS and sections["subdirs"] is None:
             sections["subdirs"] = []
             cur = "subdirs"
         elif stripped.startswith("## ") or stripped.startswith("# "):
-            if cur in ("role", "subdirs"):
+            if cur in ("role", "notes", "subdirs"):
                 cur = "tail"
             sections[cur].append(line)
         else:
@@ -361,8 +405,8 @@ def _parse_subdir_rows(lines: list[str]) -> list[tuple[str, str]]:
 
 
 def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, str]],
-               index_rows: list[tuple[str, str, str, str]], head: list[str], tail: list[str],
-               subdir_notes: str = "") -> str:
+               index_block: list[str], head: list[str], tail: list[str],
+               subdir_notes: str = "", folder_notes: list[str] | None = None) -> str:
     s = lib.strings
     placeholder = s["placeholder"]
     role_text = "\n".join(role).strip()
@@ -371,6 +415,8 @@ def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, 
     parts: list[str] = []
     parts.append("\n".join(head).rstrip())
     parts.append(s["role"] + "\n\n" + (role_text or placeholder))
+    notes_text = "\n".join(folder_notes or []).strip()
+    parts.append(s["notes"] + ("\n\n" + notes_text if notes_text else ""))
     if subdirs or subdir_notes:
         section = s["subdirs"]
         if subdirs:
@@ -384,14 +430,21 @@ def render_doc(lib: Library, d: Path, role: list[str], subdirs: list[tuple[str, 
     extra = "\n".join(tail).strip()
     if extra:
         parts.append(extra)
-    if index_rows:
-        header = s["index_header"]
-        table = [INDEX_START, "| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
-        table += [f"| {_escape(file_name)} | {_escape(symbol)} | {start} | {end} |"
-                  for file_name, symbol, start, end in index_rows]
-        table.append(INDEX_END)
-        parts.append("\n".join(table))
+    if index_block:
+        parts.append("\n".join(index_block))
     return "\n\n".join(p for p in parts if p) + "\n"
+
+
+def index_table_lines(lib: Library, index_rows: list[IndexRow]) -> list[str]:
+    header = lib.strings["index_header"]
+    table = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    table.extend(f"| {_escape(file_name)} | {_escape(symbol)} | {start} | {end} |"
+                 for file_name, symbol, start, end in index_rows)
+    return table
+
+
+def _generated_text(lines: list[str]) -> str:
+    return "\n".join([GENERATED_MARKER, *lines]) + "\n"
 
 
 def default_head(lib: Library, d: Path) -> list[str]:
@@ -445,7 +498,7 @@ def build_index_rows(lib: Library, d: Path, files: list[Path], report: Report,
                      previous: dict | None = None):
     rows = []
     for f in sorted(files, key=lambda p: p.name.lower()):
-        if f.name in lib.doc_names or f.suffix.lower() not in EXT_LANG:
+        if f.name in {"CLAUDE.md", "AGENTS.md"} or f.suffix.lower() not in EXT_LANG:
             continue
         no_symbol_row = (f.name, "-", "-", "-")
         try:
@@ -460,6 +513,129 @@ def build_index_rows(lib: Library, d: Path, files: list[Path], report: Report,
     return rows
 
 
+def _generated_lines(path: Path) -> list[str] | None:
+    if not _is_generated_file(path):
+        return None
+    return (_read(path) or "").splitlines()
+
+
+def _per_file_index_paths(d: Path) -> list[Path]:
+    index_dir = d / INDEX_DIR_NAME
+    if not index_dir.is_dir() or _is_link(index_dir):
+        return []
+    # index/index.md can belong to a real source folder named "index".
+    return [p for p in sorted(index_dir.iterdir()) if p.name != INDEX_FILE_NAME]
+
+
+def read_previous_index_rows(d: Path, inline_block: list[str] | None) -> dict[str, list[IndexRow]]:
+    """Read prior rows from the inline, shared, or per-file tier for parse-failure fallback."""
+    sources = [inline_block, _generated_lines(d / INDEX_FILE_NAME),
+               *(_generated_lines(p) for p in _per_file_index_paths(d))]
+    rows: dict[str, list[IndexRow]] = {}
+    for lines in sources:
+        for file_name, file_rows in _parse_index_rows(lines).items():
+            rows.setdefault(file_name, file_rows)
+    return rows
+
+
+def _path_is_free_for_generated_file(path: Path) -> bool:
+    return not os.path.lexists(path) or _is_generated_file(path)
+
+
+def _index_dir_is_free_for_generated_files(path: Path) -> bool:
+    if not os.path.lexists(path):
+        return True
+    if not path.is_dir() or _is_link(path):
+        return False
+    return all(_is_generated_file(child) for child in path.iterdir())
+
+
+def plan_index_layout(lib: Library, d: Path, index_rows: list[IndexRow],
+                      doc_lines_without_index: int,
+                      report: Report) -> tuple[list[str], dict[Path, str]]:
+    """Use the smallest index tier that fits, without taking over human-owned paths."""
+    if not index_rows:
+        return [], {}
+    table = index_table_lines(lib, index_rows)
+    inline_block = [INDEX_START, *table, INDEX_END]
+    limit = lib.config["maxDocLines"]
+    if doc_lines_without_index + 1 + len(inline_block) <= limit:
+        return inline_block, {}
+
+    rel = lib.rel(d)
+    index_file = d / INDEX_FILE_NAME
+    if not _path_is_free_for_generated_file(index_file):
+        report.warnings.append(
+            f"{rel}: the folder document exceeds maxDocLines {limit}, but {INDEX_FILE_NAME} "
+            "is human-owned; the index remains inline. Move that file to allow index splitting")
+        return inline_block, {}
+
+    link_block = [INDEX_START, lib.strings["index_link"].format(index_file=INDEX_FILE_NAME),
+                  INDEX_END]
+    generated_table = _generated_text(table)
+    if len(generated_table.splitlines()) <= limit:
+        return link_block, {index_file: generated_table}
+
+    if not _index_dir_is_free_for_generated_files(d / INDEX_DIR_NAME):
+        report.warnings.append(
+            f"{rel}: {INDEX_FILE_NAME} exceeds maxDocLines {limit}, but {INDEX_DIR_NAME}/ "
+            "contains human-owned files; per-file indexes cannot be created. Move that "
+            "directory to allow splitting")
+        return link_block, {index_file: generated_table}
+
+    rows_by_file: dict[str, list[IndexRow]] = defaultdict(list)
+    for row in index_rows:
+        rows_by_file[row[0]].append(row)
+    generated: dict[Path, str] = {}
+    links = []
+    for file_name, file_rows in rows_by_file.items():
+        per_file_name = f"{file_name}.md"
+        generated[d / INDEX_DIR_NAME / per_file_name] = _generated_text(
+            index_table_lines(lib, file_rows))
+        links.append(f"- [{_escape_link_label(file_name)}]({INDEX_DIR_NAME}/{quote(per_file_name)})")
+    generated[index_file] = _generated_text(links)
+    for path, text in generated.items():
+        line_count = len(text.splitlines())
+        if line_count > limit:
+            report.warnings.append(
+                f"{lib.rel(path)}: generated index has {line_count} lines > maxDocLines {limit}; "
+                "this index cannot be split further")
+    return link_block, generated
+
+
+def sync_generated_files(lib: Library, d: Path, wanted: dict[Path, str], fix: bool,
+                         report: Report) -> list[Path]:
+    """Write new index files before the folder doc; return stale files for later cleanup."""
+    for path, text in wanted.items():
+        if _read(path) == text:
+            continue
+        (report.updated if fix else report.drift).append(lib.rel(path))
+        if fix:
+            if not _path_is_free_for_generated_file(path):
+                raise FileExistsError(f"refusing to overwrite human-owned index: {path}")
+            path.parent.mkdir(exist_ok=True)
+            _write_utf8(path, text)
+
+    stale = [p for p in [d / INDEX_FILE_NAME, *_per_file_index_paths(d)]
+             if p not in wanted and _is_generated_file(p)]
+    if not fix:
+        report.drift.extend(f"{lib.rel(p)} (stale)" for p in stale)
+    return stale
+
+
+def remove_stale_index_files(lib: Library, d: Path, stale: list[Path], report: Report) -> None:
+    removed_any = False
+    for path in stale:
+        if not _is_generated_file(path):
+            continue  # a person changed it after the stale-file scan
+        path.unlink()
+        report.updated.append(f"{lib.rel(path)} (removed)")
+        removed_any = True
+    index_dir = d / INDEX_DIR_NAME
+    if removed_any and index_dir.is_dir() and not _is_link(index_dir) and not any(index_dir.iterdir()):
+        index_dir.rmdir()
+
+
 ALIAS = "@AGENTS.md"
 
 
@@ -471,15 +647,25 @@ def _read(path: Path) -> str | None:
     return path.read_text(encoding="utf-8-sig") if path.is_file() else None
 
 
-def migrate_doc(lib: Library, d: Path) -> None:
+def migrate_doc(lib: Library, d: Path) -> str | None:
     """Move a folder document when the doc mode changes (CLAUDE.md <-> AGENTS.md / both)."""
     claude, agents = d / "CLAUDE.md", d / "AGENTS.md"
     c, a = _read(claude), _read(agents)
     if lib.primary_doc == "AGENTS.md":
         if a is None and c is not None and c.strip() != ALIAS and _is_librarian_doc(c):
             claude.replace(agents)
+        elif (d == lib.root and lib.doc_mode == "both" and a is not None and c is not None
+              and c.strip() != ALIAS and _is_librarian_doc(c)):
+            if _is_librarian_doc(a):
+                return (f"{lib.rel(d)}: both CLAUDE.md and AGENTS.md contain folder-document "
+                        "sections; review and merge their human-written instructions manually")
+            # A user may have written shared rules in root AGENTS.md before enabling both.
+            # Store both bodies in the new primary document before replacing CLAUDE.md.
+            _write_utf8(agents, c.rstrip("\n") + "\n\n" + a)
+            _write_utf8(claude, ALIAS + "\n")
     elif a is not None and _is_librarian_doc(a) and (c is None or c.strip() == ALIAS):
         agents.replace(claude)
+    return None
 
 
 def sync_dir(lib: Library, d: Path, files: list[Path], children: list[Path], fix: bool,
@@ -492,13 +678,17 @@ def sync_dir(lib: Library, d: Path, files: list[Path], children: list[Path], fix
     report = Report()
     rel = lib.rel(d)
     if fix:
-        migrate_doc(lib, d)
+        migration_warning = migrate_doc(lib, d)
+        if migration_warning:
+            report.warnings.append(migration_warning)
+            return report  # neither document can be rewritten until the conflict is resolved
     doc = lib.doc_path(d)
     original = _read(doc)
     existed = original is not None
     original = original or ""
     sec = _split_sections(original) if existed else {
-        "head": [], "role": None, "subdirs": None, "index": None, "tail": []}
+        "head": [], "role": None, "notes": None, "subdirs": None, "index": None,
+        "tail": []}
     sec["head"] = normalize_head(lib, d, sec["head"])
 
     child_dirs = sorted(children, key=lambda p: p.name.lower())
@@ -512,21 +702,30 @@ def sync_dir(lib: Library, d: Path, files: list[Path], children: list[Path], fix
             and child_dirs[added[0]] in had_doc and known[removed[0]] not in PLACEHOLDERS):
         subdirs[added[0]] = (subdirs[added[0]][0], known[removed[0]])
     notes = "\n".join(l for l in (sec["subdirs"] or []) if not l.strip().startswith("|")).strip()
-    index_rows = build_index_rows(lib, d, files, report, _parse_index_rows(sec["index"]))
+    index_rows = build_index_rows(lib, d, files, report, read_previous_index_rows(d, sec["index"]))
 
-    rendered = render_doc(lib, d, sec["role"] or [], subdirs, index_rows, sec["head"], sec["tail"],
-                          notes)
+    def render_with_index_block(index_block: list[str]) -> str:
+        return render_doc(lib, d, sec["role"] or [], subdirs, index_block, sec["head"],
+                          sec["tail"], notes, sec["notes"] or [])
+
+    doc_lines_without_index = len(render_with_index_block([]).splitlines())
+    index_block, generated_files = plan_index_layout(
+        lib, d, index_rows, doc_lines_without_index, report)
+    rendered = render_with_index_block(index_block)
+    stale_index_files = sync_generated_files(lib, d, generated_files, fix, report)
     if rendered != original:
         if not existed:
             (report.created if fix else report.drift).append(rel)
         else:
             (report.updated if fix else report.drift).append(rel)
         if fix:
-            doc.write_text(rendered, encoding="utf-8", newline="\n")
+            _write_utf8(doc, rendered)
+    if fix:
+        remove_stale_index_files(lib, d, stale_index_files, report)
     if fix and lib.doc_mode == "both":
         alias = d / "CLAUDE.md"
         if not alias.is_file():
-            alias.write_text(ALIAS + "\n", encoding="utf-8", newline="\n")
+            _write_utf8(alias, ALIAS + "\n")
 
     if _role_is_empty(sec["role"]) or any(not r or r in PLACEHOLDERS for _, r in subdirs):
         report.pending.append(rel)
@@ -601,6 +800,40 @@ def changed_dirs(lib: Library) -> set[Path] | None:
                 paths.add((lib.root / entries[i]).parent)
             i += 1
     return paths
+
+
+# ---------------------------------------------------------------- long documents
+
+
+def find_overlong_docs(lib: Library) -> list[tuple[str, int]]:
+    """Find long folder docs, root AGENTS.md, and Claude rule files.
+
+    The root AGENTS.md may be a user-owned shared-rules file even when CLAUDE.md is the
+    configured folder document. Only managed folder documents omit generated index rows.
+    """
+    folder_docs = {lib.doc_path(d) for d in managed_dirs(lib, list_files(lib))}
+    candidates = folder_docs | {lib.root / "AGENTS.md"}
+    rules_dir = lib.root / CLAUDE_RULES_DIR
+    if not _is_link(rules_dir):
+        try:
+            candidates.update(rules_dir.rglob("*.md"))
+        except OSError:
+            pass
+
+    overlong = []
+    for path in sorted(candidates):
+        try:
+            text = _read(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        if text is None:
+            continue
+        count = len(text.splitlines())
+        if path in folder_docs:
+            count -= len(_split_sections(text)["index"] or [])
+        if count > lib.config["maxDocLines"]:
+            overlong.append((lib.rel(path), count))
+    return overlong
 
 
 # ---------------------------------------------------------------- legacy rules skill
@@ -808,6 +1041,26 @@ def hook_stop(payload: dict) -> None:
     _emit(out)
 
 
+def hook_session_start(payload: dict) -> None:
+    cwd = Path(payload.get("cwd") or os.getcwd())
+    lib = load_library(cwd)
+    if lib is None:
+        return
+    overlong = find_overlong_docs(lib)
+    if not overlong:
+        return
+    listing = ", ".join(f"{rel} ({count} lines)" for rel, count in overlong)
+    context = (
+        f"librarian: these documents exceed maxDocLines {lib.config['maxDocLines']}: {listing}. "
+        "The folder-document count excludes generated index rows. Split human-written text "
+        "by topic, leave a one-line pointer in the original, and avoid duplicated rules. "
+        "Keep shared and non-Claude instructions in root AGENTS.md; group or condense them "
+        "there and point to detailed ordinary documents when needed. "
+        f"See the rule-creator skill. Write in the library language ({lib.language}).")
+    _emit({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                  "additionalContext": context}})
+
+
 # ---------------------------------------------------------------- CLI
 
 
@@ -870,6 +1123,12 @@ def cmd_check(args) -> None:
     lib = _require(Path(args.root))
     targets = changed_dirs(lib) if args.changed else None
     report = sync_dirs(lib, targets, fix=args.fix)
+    limit = lib.config["maxDocLines"]
+    report.warnings.extend(
+        f"{rel}: {count} lines > maxDocLines {limit}; split human-written text by topic "
+        "and leave a one-line pointer; keep shared and non-Claude instructions in root "
+        "AGENTS.md (see the rule-creator skill)"
+        for rel, count in find_overlong_docs(lib))
     _print_report(report)
     if report.drift or report.pending:
         sys.exit(1)
@@ -905,6 +1164,8 @@ def cmd_hook(args) -> None:
     try:
         if args.event == "post-edit":
             hook_post_edit(payload)
+        elif args.event == "session-start":
+            hook_session_start(payload)
         else:
             hook_stop(payload)
     except Exception as exc:  # hooks never block the editing flow
@@ -944,7 +1205,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("update").set_defaults(func=cmd_update)
 
     p = sub.add_parser("hook")
-    p.add_argument("event", choices=["post-edit", "stop"])
+    p.add_argument("event", choices=["post-edit", "stop", "session-start"])
     p.set_defaults(func=cmd_hook)
 
     args = parser.parse_args(argv)

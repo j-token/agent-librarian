@@ -19,6 +19,7 @@ Write everything in the **library language** (the `language` value in `.libraria
 
 - Describe what a function or file does. Write only the role of the folder as a whole.
 - Edit the block from `<!-- librarian:index:start -->` to `<!-- librarian:index:end -->`.
+- Edit the Notes section (`## Notes` or `## 메모`), `index.md`, or the generated `index/` folder; they are outside this role-writing assignment.
 - Change the first line (the parent link) or the rows of the subfolder table (adding, removing, reordering). The script manages the rows.
 - Repeat what a parent document already says, such as restating the purpose of the whole repository in a subfolder.
 - Pull a subfolder's details up into its parent. The parent's table gets a one-line summary only.

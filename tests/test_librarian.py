@@ -72,6 +72,10 @@ def root_doc(project):
     return (project / "CLAUDE.md").read_text(encoding="utf-8")
 
 
+def plugin_version_from_manifest():
+    return json.loads((REPO_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
+
+
 def commit_all(project):
     git(project, "add", "-A")
     git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "c")
@@ -110,8 +114,14 @@ def hook(event, payload):
     ("native/J.java", [("J", 1, 4), ("J.J", 2, 2), ("J.run", 3, 3)]),
     ("native/K.cs", [("K", 2, 4), ("K.M", 3, 3)]),
 ])
-def test_extract_symbols(project, rel, expected):
-    assert lb.extract_symbols(project / rel) == expected
+def test_scaffold_indexes_symbols_with_line_ranges(project, rel, expected):
+    init(project)
+    source = Path(rel)
+    doc = project / source.parent / "CLAUDE.md"
+    actual = [(symbol, int(start), int(end))
+              for file_name, symbol, start, end in index_rows(doc)
+              if file_name == source.name]
+    assert actual == expected
 
 
 # ---------------------------------------------------------------- scaffold / index
@@ -156,11 +166,239 @@ def test_index_preserves_human_text(project):
     assert doc.read_text(encoding="utf-8") == out  # idempotent
 
 
+def test_index_moves_to_index_md_and_returns_inline_when_limit_rises(project):
+    init(project)
+    doc = project / "src/auth/CLAUDE.md"
+    notes = "## Notes\n\nKeep this explanation."
+    doc.write_text(doc.read_text(encoding="utf-8").replace("## Notes", notes), encoding="utf-8")
+    inline_lines = len(doc.read_text(encoding="utf-8").splitlines())
+    set_max_doc_lines(project, inline_lines - 1)
+
+    run(project, "index", str(doc.parent))
+
+    index_file = doc.parent / "index.md"
+    assert index_file.read_text(encoding="utf-8").startswith(lb.GENERATED_MARKER + "\n")
+    assert "| auth.py | Session | 3 | 6 |" in index_file.read_text(encoding="utf-8")
+    assert "[Index](index.md)" in doc.read_text(encoding="utf-8")
+    assert notes in doc.read_text(encoding="utf-8")
+    run(project, "index", "--all")
+    assert "| index.md |" not in index_file.read_text(encoding="utf-8")
+
+    set_max_doc_lines(project, 200)
+    run(project, "index", str(doc.parent))
+
+    assert ("auth.py", "Session", "3", "6") in index_rows(doc)
+    assert notes in doc.read_text(encoding="utf-8")
+    assert not index_file.exists()
+
+
+def test_large_index_splits_per_file_then_recombines_through_both_tiers(project):
+    init(project)
+    folder = project / "src/auth"
+    for number in range(8):
+        (folder / f"extra{number}.py").write_text(f"def extra{number}(): pass\n", encoding="utf-8")
+    set_max_doc_lines(project, 10)
+
+    run(project, "index", str(folder))
+
+    index_file = folder / "index.md"
+    per_file = folder / "index/extra0.py.md"
+    assert index_file.read_text(encoding="utf-8").startswith(lb.GENERATED_MARKER + "\n")
+    assert "[extra0.py](index/extra0.py.md)" in index_file.read_text(encoding="utf-8")
+    assert "| extra0.py | extra0 | 1 | 1 |" in per_file.read_text(encoding="utf-8")
+    run(project, "index", "--all")
+    assert not (folder / "index/CLAUDE.md").exists()
+    assert "| extra0.py.md |" not in index_file.read_text(encoding="utf-8")
+
+    set_max_doc_lines(project, 16)
+    run(project, "index", str(folder))
+    assert "| extra0.py | extra0 | 1 | 1 |" in index_file.read_text(encoding="utf-8")
+    assert not (folder / "index").exists()
+
+    set_max_doc_lines(project, 200)
+    run(project, "index", str(folder))
+    assert ("extra0.py", "extra0", "1", "1") in index_rows(folder / "CLAUDE.md")
+    assert not index_file.exists()
+
+
+def test_per_file_index_escapes_link_labels_and_warns_when_final_files_stay_long(project, capsys):
+    init(project)
+    folder = project / "src/auth"
+    (folder / "a]b.py").write_text("def bracket(): pass\n", encoding="utf-8")
+    for number in range(6):
+        (folder / f"extra{number}.py").write_text(f"def extra{number}(): pass\n", encoding="utf-8")
+    set_max_doc_lines(project, 5)
+
+    run(project, "index", str(folder))
+
+    index_file = folder / "index.md"
+    links = index_file.read_text(encoding="utf-8")
+    assert "- [a\\]b.py](index/a%5Db.py.md)" in links
+    assert "| a]b.py | bracket | 1 | 1 |" in (folder / "index/a]b.py.md").read_text(encoding="utf-8")
+    warnings = capsys.readouterr().out
+    assert "src/auth/index.md: generated index has" in warnings
+    assert "src/auth/index/auth.py.md: generated index has" in warnings
+    assert "cannot be split further" in warnings
+
+
+def test_human_index_paths_are_preserved_when_splitting_is_blocked(project, capsys):
+    init(project)
+    folder = project / "src/auth"
+    set_max_doc_lines(project, 10)
+    human_index = folder / "index.md"
+    human_index.write_text("# Human index\n", encoding="utf-8")
+
+    run(project, "index", str(folder))
+
+    assert human_index.read_text(encoding="utf-8") == "# Human index\n"
+    assert ("auth.py", "Session", "3", "6") in index_rows(folder / "CLAUDE.md")
+    assert "index.md is human-owned" in capsys.readouterr().out
+
+    human_index.unlink()
+    index_dir = folder / "index"
+    index_dir.mkdir()
+    (index_dir / "keep.txt").write_text("human file\n", encoding="utf-8")
+    for number in range(8):
+        (folder / f"extra{number}.py").write_text(f"def extra{number}(): pass\n", encoding="utf-8")
+    run(project, "index", str(folder))
+
+    assert (index_dir / "keep.txt").read_text(encoding="utf-8") == "human file\n"
+    assert not (index_dir / "extra0.py.md").exists()
+    assert "| extra0.py | extra0 | 1 | 1 |" in (folder / "index.md").read_text(encoding="utf-8")
+    assert "contains human-owned files" in capsys.readouterr().out
+
+
+def test_parse_failure_preserves_rows_across_split_tiers(project):
+    init(project)
+    folder = project / "src/auth"
+    set_max_doc_lines(project, 14)
+    run(project, "index", str(folder))
+    assert (folder / "index.md").is_file()
+
+    (folder / "auth.py").write_text("def broken(:\n", encoding="utf-8")
+    for number in range(8):
+        (folder / f"extra{number}.py").write_text(f"def extra{number}(): pass\n", encoding="utf-8")
+    set_max_doc_lines(project, 10)
+    run(project, "index", str(folder))
+    assert "| auth.py | Session | 3 | 6 |" in (folder / "index/auth.py.md").read_text(encoding="utf-8")
+
+    set_max_doc_lines(project, 200)
+    run(project, "index", str(folder))
+    assert ("auth.py", "Session", "3", "6") in index_rows(folder / "CLAUDE.md")
+
+
+def test_check_reports_split_drift_without_writing_files(project, capsys):
+    init(project)
+    _fill_all_roles(project)
+    folder = project / "src/auth"
+    original = (folder / "CLAUDE.md").read_text(encoding="utf-8")
+    set_max_doc_lines(project, len(original.splitlines()) - 1)
+
+    with pytest.raises(SystemExit) as error:
+        run(project, "check")
+
+    assert error.value.code == 1
+    assert "[drift] src/auth" in capsys.readouterr().out
+    assert (folder / "CLAUDE.md").read_text(encoding="utf-8") == original
+    assert not (folder / "index.md").exists()
+
+    run(project, "check", "--fix")
+    assert (folder / "index.md").is_file()
+    run(project, "check")
+
+
+def test_cleanup_keeps_generated_index_file_edited_by_human(project):
+    init(project)
+    folder = project / "src/auth"
+    set_max_doc_lines(project, 10)
+    run(project, "index", str(folder))
+    index_file = folder / "index.md"
+    human_text = "# This index is now human-maintained\n"
+    index_file.write_text(human_text, encoding="utf-8")
+
+    set_max_doc_lines(project, 200)
+    run(project, "index", str(folder))
+
+    assert index_file.read_text(encoding="utf-8") == human_text
+    assert ("auth.py", "Session", "3", "6") in index_rows(folder / "CLAUDE.md")
+
+
 def test_both_mode(project):
     init(project, doc="both")
     assert (project / "src/AGENTS.md").is_file()
     assert (project / "src/CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
     assert "# Parent: ../AGENTS.md" in (project / "src/auth/AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_switch_to_both_merges_managed_root_claude_with_human_root_agents(project):
+    init(project)
+    claude = project / "CLAUDE.md"
+    agents = project / "AGENTS.md"
+    claude.write_text(claude.read_text(encoding="utf-8").replace(
+        EN["placeholder"], "Managed root role.", 1).replace(
+        "## Notes", "## Notes\n\nExisting Claude notes."), encoding="utf-8")
+    human_rules = ("# Shared rules\n\n" +
+                   "\n".join(f"- Keep rule {number}." for number in range(25)) +
+                   "\n\n## Detailed scope\n\nHuman details stay here.\n")
+    agents.write_text(human_rules, encoding="utf-8")
+
+    run(project, "init", "--doc", "both")
+    run(project, "index", "--all")
+    run(project, "index", "--all")
+
+    merged = agents.read_text(encoding="utf-8")
+    assert "Managed root role." in merged
+    assert "Existing Claude notes." in merged
+    assert "Human details stay here." in merged
+    assert all(f"- Keep rule {number}." in merged for number in range(25))
+    assert claude.read_text(encoding="utf-8") == "@AGENTS.md\n"
+
+
+def test_switch_to_both_warns_when_both_root_docs_have_managed_sections(project, capsys):
+    init(project)
+    claude = project / "CLAUDE.md"
+    agents = project / "AGENTS.md"
+    old_claude = claude.read_text(encoding="utf-8").replace(EN["placeholder"], "Claude role.", 1)
+    claude.write_text(old_claude, encoding="utf-8")
+    human_agents = "# Shared rules\n\n## What this folder is for\n\nHuman rule body.\n"
+    agents.write_text(human_agents, encoding="utf-8")
+
+    run(project, "init", "--doc", "both")
+    run(project, "index", "--all")
+
+    assert "both CLAUDE.md and AGENTS.md contain folder-document sections" in capsys.readouterr().out
+    assert claude.read_text(encoding="utf-8") == old_claude
+    assert agents.read_text(encoding="utf-8") == human_agents
+
+
+def test_split_and_both_migration_do_not_require_path_write_text_newline(project, monkeypatch):
+    init(project)
+    root_claude = project / "CLAUDE.md"
+    root_claude.write_text(root_claude.read_text(encoding="utf-8").replace(
+        EN["placeholder"], "Root role.", 1), encoding="utf-8")
+    root_agents = project / "AGENTS.md"
+    root_agents.write_text("# Shared rules\n\nKeep this rule.\n", encoding="utf-8")
+    set_max_doc_lines(project, 10)
+
+    original_write_text = Path.write_text
+
+    def python39_write_text(path, text, *args, **kwargs):
+        if "newline" in kwargs:
+            raise TypeError("Path.write_text() got an unexpected keyword argument 'newline'")
+        return original_write_text(path, text, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", python39_write_text)
+    folder = project / "src/auth"
+    run(project, "index", str(folder))
+    assert (folder / "index.md").read_text(encoding="utf-8").startswith(
+        lb.GENERATED_MARKER + "\n")
+
+    run(project, "init", "--doc", "both")
+    run(project, "index", "--all")
+    assert "Root role." in root_agents.read_text(encoding="utf-8")
+    assert "Keep this rule." in root_agents.read_text(encoding="utf-8")
+    assert root_claude.read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert (folder / "AGENTS.md").is_file()
 
 
 def test_exclude_and_gitignore(project):
@@ -221,6 +459,81 @@ def test_hook_ignores_doc_edits(project):
     before = doc.read_text(encoding="utf-8")
     hook("post-edit", {"cwd": str(project), "tool_input": {"file_path": str(doc)}})
     assert doc.read_text(encoding="utf-8") == before
+
+
+def test_session_start_hook_reports_scan_error_without_stopping_session(project, monkeypatch, capsys):
+    init(project)
+
+    def fail_scan(_lib):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(lb, "find_overlong_docs", fail_scan)
+    assert hook("session-start", {"cwd": str(project)}) == ""
+    assert "librarian hook error: RuntimeError('scan failed')" in capsys.readouterr().err
+
+
+def test_session_start_command_keeps_python3_fallback():
+    hooks = json.loads((REPO_ROOT / "hooks/hooks.json").read_text(encoding="utf-8"))
+    command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert command.startswith("python3 -c ")
+    assert " || python -c " in command
+    assert "CLAUDE_PLUGIN_ROOT" in command and "PLUGIN_ROOT" in command
+
+
+def test_check_and_session_start_warn_on_long_folder_and_rule_documents(project, capsys):
+    init(project, doc="both")
+    for doc in project.rglob("AGENTS.md"):
+        doc.write_text(doc.read_text(encoding="utf-8").replace(EN["placeholder"], "role"),
+                       encoding="utf-8")
+    set_max_doc_lines(project, 30)
+    folder_doc = project / "src/auth/AGENTS.md"
+    long_notes = "\n".join(f"- note {number}" for number in range(31))
+    folder_doc.write_text(folder_doc.read_text(encoding="utf-8").replace(
+        "## Notes", "## Notes\n\n" + long_notes), encoding="utf-8")
+    root_agents = project / "AGENTS.md"
+    root_agents.write_text(root_agents.read_text(encoding="utf-8").replace(
+        "## Notes", "## Notes\n\n" + long_notes), encoding="utf-8")
+    rules_dir = project / ".claude/rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "long.md").write_text("rule\n" * 31, encoding="utf-8")
+
+    run(project, "check", "--fix")
+    warnings = capsys.readouterr().out
+    assert "src/auth/AGENTS.md" in warnings
+    assert ".claude/rules/long.md" in warnings
+    assert warnings.count("[warning] AGENTS.md:") == 1
+    assert "src/auth/CLAUDE.md" not in warnings
+    assert (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert "[Index](index.md)" in folder_doc.read_text(encoding="utf-8")
+
+    run(project, "check")  # warnings alone do not fail a read-only check
+    assert "[drift]" not in capsys.readouterr().out
+    start = json.loads(hook("session-start", {"cwd": str(project / "src/auth")}))
+    context = start["hookSpecificOutput"]
+    assert context["hookEventName"] == "SessionStart"
+    assert "src/auth/AGENTS.md" in context["additionalContext"]
+    assert ".claude/rules/long.md" in context["additionalContext"]
+    assert "AGENTS.md (" in context["additionalContext"]
+
+    set_max_doc_lines(project, 200)
+    assert hook("session-start", {"cwd": str(project)}) == ""
+
+
+def test_check_warns_on_user_owned_root_agents_without_modifying_it(project, capsys):
+    init(project, doc="CLAUDE.md")
+    _fill_all_roles(project)
+    set_max_doc_lines(project, 30)
+    root_agents = project / "AGENTS.md"
+    manual_rules = "# Shared rules\n" + "Follow this rule.\n" * 31
+    root_agents.write_text(manual_rules, encoding="utf-8")
+
+    run(project, "check", "--fix")
+
+    assert "[warning] AGENTS.md: 32 lines > maxDocLines 30" in capsys.readouterr().out
+    assert root_agents.read_text(encoding="utf-8") == manual_rules
+    assert "| AGENTS.md |" not in root_doc(project)
+    assert "AGENTS.md (32 lines)" in json.loads(hook(
+        "session-start", {"cwd": str(project)}))["hookSpecificOutput"]["additionalContext"]
 
 
 def _fill_all_roles(project):
@@ -289,13 +602,15 @@ def test_default_language_is_english(project):
     assert "| Folder | Role |" in (project / "src/CLAUDE.md").read_text(encoding="utf-8")
 
 
-def test_korean_library(project):
+def test_korean_library(project, capsys):
     init(project, language="ko")
     text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# 상위 문서: ../CLAUDE.md")
     assert KO["role"] in text and KO["placeholder"] in text and "| 파일 | 함수 | 시작 줄 | 끝 줄 |" in text
     assert root_doc(project).startswith(f"# {project.name}\n\n{KO['role']}\n")
-    assert "src/auth" in [r for r in lb.sync_dirs(lb.load_library(project), None, False).pending]
+    capsys.readouterr()
+    run(project, "pending")
+    assert "src/auth" in capsys.readouterr().out.splitlines()
 
 
 def test_language_switch_keeps_roles(project):
@@ -457,8 +772,11 @@ def test_invalid_config_numbers_fall_back(project):
     cfg_path = project / ".librarian/config.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     cfg["maxDepth"] = "deep"
+    cfg["maxDocLines"] = "many"
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     run(project, "index", "--all")  # must not raise
+    run(project, "update")
+    assert read_config(project)["maxDocLines"] == 200
 
 
 def test_many_files_is_fast(tmp_path):
@@ -511,8 +829,11 @@ def test_negative_limits_fall_back(project):
     init(project)
     cfg = read_config(project)
     cfg["maxDepth"] = -5
+    cfg["maxDocLines"] = 0
     write_config(project, cfg)
-    assert lb.load_library(project).config["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
+    run(project, "update")
+    assert read_config(project)["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
+    assert read_config(project)["maxDocLines"] == lb.DEFAULT_CONFIG["maxDocLines"]
 
 
 # ---------------------------------------------------------------- config
@@ -524,6 +845,12 @@ def read_config(project):
 
 def write_config(project, cfg):
     (project / ".librarian/config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def set_max_doc_lines(project, limit):
+    cfg = read_config(project)
+    cfg["maxDocLines"] = limit
+    write_config(project, cfg)
 
 
 # keys written by versions that had the index-row warning, the session-start hook, or the
@@ -551,7 +878,7 @@ def test_update_fills_missing_keys_and_records_version(project):
     write_config(project, {"language": "en", "docName": "CLAUDE.md"})
     run(project, "update")
     cfg = read_config(project)
-    assert cfg["libraryVersion"] == lb.plugin_version()
+    assert cfg["libraryVersion"] == plugin_version_from_manifest()
     assert cfg["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
 
 
@@ -612,7 +939,7 @@ def test_stop_hook_without_plugin_version_still_blocks_on_empty_roles(project, m
 
 def test_stop_hook_has_no_update_notice_when_versions_match(project):
     init(project)
-    out = stop_with_library_version(project, lb.plugin_version())
+    out = stop_with_library_version(project, plugin_version_from_manifest())
     assert "systemMessage" not in out
 
 
