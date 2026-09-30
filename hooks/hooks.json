@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','session-start'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','session-start'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','session-start'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','session-start'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
             "timeout": 30
           }
         ]
