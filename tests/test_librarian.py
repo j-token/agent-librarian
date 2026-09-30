@@ -72,6 +72,10 @@ def root_doc(project):
     return (project / "CLAUDE.md").read_text(encoding="utf-8")
 
 
+def plugin_version_from_manifest():
+    return json.loads((REPO_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
+
+
 def commit_all(project):
     git(project, "add", "-A")
     git(project, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qm", "c")
@@ -110,8 +114,14 @@ def hook(event, payload):
     ("native/J.java", [("J", 1, 4), ("J.J", 2, 2), ("J.run", 3, 3)]),
     ("native/K.cs", [("K", 2, 4), ("K.M", 3, 3)]),
 ])
-def test_extract_symbols(project, rel, expected):
-    assert lb.extract_symbols(project / rel) == expected
+def test_scaffold_indexes_symbols_with_line_ranges(project, rel, expected):
+    init(project)
+    source = Path(rel)
+    doc = project / source.parent / "CLAUDE.md"
+    actual = [(symbol, int(start), int(end))
+              for file_name, symbol, start, end in index_rows(doc)
+              if file_name == source.name]
+    assert actual == expected
 
 
 # ---------------------------------------------------------------- scaffold / index
@@ -168,10 +178,11 @@ def test_index_moves_to_index_md_and_returns_inline_when_limit_rises(project):
 
     index_file = doc.parent / "index.md"
     assert index_file.read_text(encoding="utf-8").startswith(lb.GENERATED_MARKER + "\n")
-    assert ("auth.py", "Session", "3", "6") in lb._parse_index_rows(index_file.read_text(encoding="utf-8").splitlines())["auth.py"]
+    assert "| auth.py | Session | 3 | 6 |" in index_file.read_text(encoding="utf-8")
     assert "[Index](index.md)" in doc.read_text(encoding="utf-8")
     assert notes in doc.read_text(encoding="utf-8")
-    assert index_file not in lb.list_files(lb.load_library(project))
+    run(project, "index", "--all")
+    assert "| index.md |" not in index_file.read_text(encoding="utf-8")
 
     set_max_doc_lines(project, 200)
     run(project, "index", str(doc.parent))
@@ -195,7 +206,9 @@ def test_large_index_splits_per_file_then_recombines_through_both_tiers(project)
     assert index_file.read_text(encoding="utf-8").startswith(lb.GENERATED_MARKER + "\n")
     assert "[extra0.py](index/extra0.py.md)" in index_file.read_text(encoding="utf-8")
     assert "| extra0.py | extra0 | 1 | 1 |" in per_file.read_text(encoding="utf-8")
-    assert all(p not in lb.list_files(lb.load_library(project)) for p in (index_file, per_file))
+    run(project, "index", "--all")
+    assert not (folder / "index/CLAUDE.md").exists()
+    assert "| extra0.py.md |" not in index_file.read_text(encoding="utf-8")
 
     set_max_doc_lines(project, 16)
     run(project, "index", str(folder))
@@ -358,6 +371,36 @@ def test_switch_to_both_warns_when_both_root_docs_have_managed_sections(project,
     assert agents.read_text(encoding="utf-8") == human_agents
 
 
+def test_split_and_both_migration_do_not_require_path_write_text_newline(project, monkeypatch):
+    init(project)
+    root_claude = project / "CLAUDE.md"
+    root_claude.write_text(root_claude.read_text(encoding="utf-8").replace(
+        EN["placeholder"], "Root role.", 1), encoding="utf-8")
+    root_agents = project / "AGENTS.md"
+    root_agents.write_text("# Shared rules\n\nKeep this rule.\n", encoding="utf-8")
+    set_max_doc_lines(project, 10)
+
+    original_write_text = Path.write_text
+
+    def python39_write_text(path, text, *args, **kwargs):
+        if "newline" in kwargs:
+            raise TypeError("Path.write_text() got an unexpected keyword argument 'newline'")
+        return original_write_text(path, text, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", python39_write_text)
+    folder = project / "src/auth"
+    run(project, "index", str(folder))
+    assert (folder / "index.md").read_text(encoding="utf-8").startswith(
+        lb.GENERATED_MARKER + "\n")
+
+    run(project, "init", "--doc", "both")
+    run(project, "index", "--all")
+    assert "Root role." in root_agents.read_text(encoding="utf-8")
+    assert "Keep this rule." in root_agents.read_text(encoding="utf-8")
+    assert root_claude.read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert (folder / "AGENTS.md").is_file()
+
+
 def test_exclude_and_gitignore(project):
     (project / ".gitignore").write_text("gen/\n", encoding="utf-8")
     (project / "gen").mkdir()
@@ -416,6 +459,25 @@ def test_hook_ignores_doc_edits(project):
     before = doc.read_text(encoding="utf-8")
     hook("post-edit", {"cwd": str(project), "tool_input": {"file_path": str(doc)}})
     assert doc.read_text(encoding="utf-8") == before
+
+
+def test_session_start_hook_reports_scan_error_without_stopping_session(project, monkeypatch, capsys):
+    init(project)
+
+    def fail_scan(_lib):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(lb, "find_overlong_docs", fail_scan)
+    assert hook("session-start", {"cwd": str(project)}) == ""
+    assert "librarian hook error: RuntimeError('scan failed')" in capsys.readouterr().err
+
+
+def test_session_start_command_keeps_python3_fallback():
+    hooks = json.loads((REPO_ROOT / "hooks/hooks.json").read_text(encoding="utf-8"))
+    command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert command.startswith("python3 -c ")
+    assert " || python -c " in command
+    assert "CLAUDE_PLUGIN_ROOT" in command and "PLUGIN_ROOT" in command
 
 
 def test_check_and_session_start_warn_on_long_folder_and_rule_documents(project, capsys):
@@ -540,13 +602,15 @@ def test_default_language_is_english(project):
     assert "| Folder | Role |" in (project / "src/CLAUDE.md").read_text(encoding="utf-8")
 
 
-def test_korean_library(project):
+def test_korean_library(project, capsys):
     init(project, language="ko")
     text = (project / "src/auth/CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# 상위 문서: ../CLAUDE.md")
     assert KO["role"] in text and KO["placeholder"] in text and "| 파일 | 함수 | 시작 줄 | 끝 줄 |" in text
     assert root_doc(project).startswith(f"# {project.name}\n\n{KO['role']}\n")
-    assert "src/auth" in [r for r in lb.sync_dirs(lb.load_library(project), None, False).pending]
+    capsys.readouterr()
+    run(project, "pending")
+    assert "src/auth" in capsys.readouterr().out.splitlines()
 
 
 def test_language_switch_keeps_roles(project):
@@ -711,7 +775,8 @@ def test_invalid_config_numbers_fall_back(project):
     cfg["maxDocLines"] = "many"
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     run(project, "index", "--all")  # must not raise
-    assert lb.load_library(project).config["maxDocLines"] == 200
+    run(project, "update")
+    assert read_config(project)["maxDocLines"] == 200
 
 
 def test_many_files_is_fast(tmp_path):
@@ -766,8 +831,9 @@ def test_negative_limits_fall_back(project):
     cfg["maxDepth"] = -5
     cfg["maxDocLines"] = 0
     write_config(project, cfg)
-    assert lb.load_library(project).config["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
-    assert lb.load_library(project).config["maxDocLines"] == lb.DEFAULT_CONFIG["maxDocLines"]
+    run(project, "update")
+    assert read_config(project)["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
+    assert read_config(project)["maxDocLines"] == lb.DEFAULT_CONFIG["maxDocLines"]
 
 
 # ---------------------------------------------------------------- config
@@ -812,7 +878,7 @@ def test_update_fills_missing_keys_and_records_version(project):
     write_config(project, {"language": "en", "docName": "CLAUDE.md"})
     run(project, "update")
     cfg = read_config(project)
-    assert cfg["libraryVersion"] == lb.plugin_version()
+    assert cfg["libraryVersion"] == plugin_version_from_manifest()
     assert cfg["maxDepth"] == lb.DEFAULT_CONFIG["maxDepth"]
 
 
@@ -873,7 +939,7 @@ def test_stop_hook_without_plugin_version_still_blocks_on_empty_roles(project, m
 
 def test_stop_hook_has_no_update_notice_when_versions_match(project):
     init(project)
-    out = stop_with_library_version(project, lb.plugin_version())
+    out = stop_with_library_version(project, plugin_version_from_manifest())
     assert "systemMessage" not in out
 
 
