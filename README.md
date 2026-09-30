@@ -50,6 +50,16 @@ The first thing the install commands ask is the **library language**: the langua
 - At session start, a hook warns when a folder document or Markdown rule file is longer than `maxDocLines` lines. `check` reports the same warnings. The agent can use `rule-creator` to move long, human-written rules by topic; the script does not rewrite those rules.
 - The reasoning behind the design is written up in the [knowledge management research notes](docs/research/knowledge-management.md) (in Korean).
 
+JavaScript/TypeScript indexes also include anonymous block callbacks in `test`, `it`,
+`describe`, and `test.describe` calls with literal titles, such as `test('example')`.
+Rows start at the callee and end at the callback's closing brace; suites include their
+nested test rows. Quoted strings and static template literals are supported, along with
+`only`, `skip`, `concurrent`, and `sequential`; tests also accept `fixme`, `fail`, and
+`fails`, while suites accept `serial` and `parallel`. Async arrows, anonymous functions,
+and `test(title, details, callback)` are supported. Imports and aliases are not resolved:
+the scanner recognizes these callee names by syntax. Dynamic titles, `each` factories,
+expression callbacks, callback references, and hooks such as `beforeEach` are omitted.
+
 ### Long folders and progressive indexes
 
 `maxDocLines` defaults to 200. The generated index is split into levels when it would make a folder document too long:

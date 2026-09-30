@@ -53,6 +53,16 @@
 - 세션을 시작할 때 폴더 문서나 Markdown 규칙 파일이 `maxDocLines`보다 길면 훅이 경고합니다. `check` 명령도 같은 경고를 표시합니다. 에이전트는 `rule-creator`로 긴 규칙을 주제별로 옮길 수 있습니다. 스크립트가 사람이 쓴 규칙을 자동으로 고치지는 않습니다.
 - 설계 근거는 [지식 관리 이론 조사](docs/research/knowledge-management.md)에 정리했습니다.
 
+JavaScript/TypeScript 인덱스에는 리터럴 제목을 받는 `test`, `it`, `describe`,
+`test.describe` 호출의 익명 블록 콜백도 `test('example')` 같은 이름으로 기록합니다.
+시작 줄은 호출 대상이 시작하는 줄이고, 끝 줄은 콜백 본문을 닫는 중괄호의 줄입니다.
+테스트 묶음 안의 테스트도 기록합니다. 따옴표 문자열과 정적 템플릿 리터럴,
+`only`, `skip`, `concurrent`, `sequential` 변형을 지원합니다. 테스트는 `fixme`,
+`fail`, `fails`, 테스트 묶음은 `serial`, `parallel`도 지원합니다. async 화살표 함수,
+익명 함수와 `test(title, details, callback)` 형태를 지원합니다. import나 별칭을
+해석하지 않고 호출 이름과 구문으로 판별합니다. 동적 제목, `each` 팩터리, 표현식
+콜백, 콜백 참조와 `beforeEach` 같은 훅은 기록하지 않습니다.
+
 ### 긴 폴더의 인덱스 나누기
 
 `maxDocLines`의 기본값은 200입니다. 생성된 인덱스 때문에 폴더 문서가 길어지면 스크립트가 다음 단계로 나눕니다.
