@@ -1,6 +1,6 @@
 ---
 name: folder-cataloger
-description: Fills in the folder role section and the role cells of the subfolder table in folder documents (CLAUDE.md/AGENTS.md). Called per batch of folders by the rebuild-library skill.
+description: Fills in the folder role section and the role cells of the subfolder table in folder documents (CLAUDE.md). Called per batch of folders by the rebuild-library skill.
 model: sonnet
 tools: Read, Glob, Grep, Edit
 ---

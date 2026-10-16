@@ -24,18 +24,20 @@ claude --plugin-dir /path/to/agent-librarian
 
 - **Standard library only.** Code under `scripts/` must run on Python 3.9+ with nothing but the standard library. Do not add runtime dependencies. Keep `from __future__ import annotations` at the top of each module so newer type syntax stays 3.9-compatible.
 - **Development tools are the exception.** Files under `dev/` may use extra packages (for example `tree-sitter-language-pack`), because they are never run by users.
-- **Support both Claude Code and Codex.** Keep the native manifests in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` at the same version. Codex's manifest points to the shared `hooks/hooks.json`; Claude Code discovers that file at its default path. Do not restore a root Agent Plugins `plugin.json`: the tested Codex runtimes skip hook loading for that format (see [issue #4](https://github.com/j-token/agent-librarian/issues/4)). When you add or change a hook in `hooks/hooks.json`:
-  - Read the plugin root from `CLAUDE_PLUGIN_ROOT` or `PLUGIN_ROOT`.
+- **Claude Code only.** The plugin ships one manifest, `.claude-plugin/plugin.json`, and Claude Code discovers `hooks/hooks.json` at its default path. When you add or change a hook:
+  - Reference the plugin with `"${CLAUDE_PLUGIN_ROOT}/scripts/librarian.py"`.
   - Keep the `python3 ... || python ...` fallback, since either name may be missing.
   - Copy the command format of the existing hooks.
+- **Keep hook output small.** Hook text goes into the model's context. Cap lists (see `PENDING_LIST_LIMIT`), and do not report problems the agent cannot act on.
 - **Hooks never break the session.** A hook must not raise an error that stops the user's work. Catch failures, report them on stderr, and let the session continue (see `cmd_hook` in `scripts/librarian.py`).
 
 ## Library principles
 
 These rules are the core of the project. Changes that break them will not be accepted.
 
-- **Generated documents never describe what a function or file does.** The index lists only file, function, start line and end line. Describing behavior invites wrong descriptions (hallucination).
-- **Only the script writes the index block.** Nothing else may edit the content between `<!-- librarian:index:start -->` and `<!-- librarian:index:end -->`.
+- **Generated output never describes what a function or file does.** The catalog lists only file, symbol, start line and end line. Describing behavior invites wrong descriptions (hallucination).
+- **Folder documents hold only what people and agents write.** Derived data (the catalog) lives under `.librarian/`, out of git and out of `CLAUDE.md`, because Claude Code loads a folder's `CLAUDE.md` and its parents' whenever it reads a file there. Query it on demand with `find`, `grep`, and `outline`.
+- **The catalog must not silently miss definitions.** An agent trusts a lookup more than a grep; a definition the extractor skips is worse than no catalog. Test extractor changes on real legacy code (see Tests).
 - **Roles written by people or agents are never lost.** Any change to document generation must keep existing role text.
 
 ## Language
@@ -48,14 +50,6 @@ These rules are the core of the project. Changes that break them will not be acc
 - Every change to behavior needs a test in `tests/`.
 - Test through the real entry points instead of internal helpers: the CLI (`lb.main`) and the hook helper `hook()` in `tests/test_librarian.py`.
 - Name each test after the situation and the expected result, for example `test_scaffold_does_not_overwrite`.
-- For native Codex hook discovery, run the opt-in E2E check against a real Codex executable. It uses an isolated `CODEX_HOME`, installs a local marketplace fixture, restarts the app-server, and checks `hooks/list`. It does not change your normal Codex installation or config:
-
-  ```powershell
-  $env:CODEX_E2E_BIN = 'C:\path\to\codex.exe'
-  .\.venv\Scripts\python.exe -m pytest tests/test_codex_hooks_e2e.py -q
-  ```
-
-  Repeat with the desktop's bundled executable and the terminal executable when changing packaging. Without `CODEX_E2E_BIN`, this test is skipped. It verifies backend discovery and registration; it does not trust or execute hooks or check the desktop UI. The test writes `codex-hooks-discovery.json` in its pytest temporary fixture directory.
 - If you change the symbol extractor (`scripts/extract.py`), run `python dev/compare.py <dir>` on real code before and after your change, and include both results in the pull request.
 
 ## Branches
