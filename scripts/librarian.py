@@ -29,7 +29,7 @@ CONFIG_DIR = ".librarian"
 CONFIG_FILE = "config.json"
 CATALOG_FILE = "catalog.json"
 # Bump when the extractor's output changes, so cached catalogs are rebuilt.
-CATALOG_SCHEMA = 1
+CATALOG_SCHEMA = 2
 DOC_NAME = "CLAUDE.md"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 # Extensions the extractor reads that are documentation rather than code: they neither make

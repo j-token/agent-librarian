@@ -33,7 +33,8 @@ def test_python_rules():
         "        def fallback(self): pass\n"
     )
     assert names(src, "python") == [
-        ("only_typing", 3, 3), ("handler", 7, 9), ("A", 11, 15), ("A.maybe", 13, 13),
+        ("only_typing", 3, 3), ("handler", 7, 9), ("handler.inner", 8, 8),
+        ("handler.Local", 9, 9), ("A", 11, 15), ("A.maybe", 13, 13),
         ("A.fallback", 15, 15)]
 
 

@@ -6,13 +6,15 @@ of the declaration. Methods are prefixed with their container ("Class.method").
 JS/TS test callbacks use the call and literal title as their name, start at the callee,
 and end at the callback's closing brace. Suite callbacks also expose their children.
 
-- Python uses the standard `ast` module (end line: the node's end_lineno).
+- Python uses the standard `ast` module (end line: the node's end_lineno). Definitions
+  nested in functions are listed too ("outer.inner").
 - Brace languages (JS/TS, Go, Rust, Java, C#, C, C++) use a small scanner: comments and
   string literals are blanked out (newlines kept, so offsets and lines stay valid), the
   remaining text is tokenized, and declarations are recognized statement by statement
   while a scope stack tracks braces. A declaration with a body ends at the line of the `}`
   that closes it (the last line of the file when it is never closed); a declaration without
   a body ends at its terminating `;`, or at its last token when nothing terminates it.
+  Definitions inside function bodies are not listed.
 - Markdown lists headings; a section includes its subsections and ends before the next
   heading of the same or a higher level.
 - CSS lists rule blocks by selector or at-rule header, including nested rule paths.
@@ -146,12 +148,12 @@ def _python(text: str) -> list[tuple[str, int, int]]:
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 out.append((".".join(scope + [node.name]), name_line(node), node.end_lineno))
+                visit(node.body, scope + [node.name])
             elif isinstance(node, ast.ClassDef):
                 out.append((".".join(scope + [node.name]), name_line(node), node.end_lineno))
                 visit(node.body, scope + [node.name])
             else:
-                # descend into if/try/with/for/while/match blocks in source order,
-                # never into functions
+                # descend into if/try/with/for/while/match blocks in source order
                 visit(getattr(node, "body", None) or [], scope)
                 for handler in getattr(node, "handlers", None) or []:
                     visit(handler.body, scope)

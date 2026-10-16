@@ -155,7 +155,7 @@ def run_hooks_json_command(event_key, cwd, payload):
 
 
 @pytest.mark.parametrize("rel,expected", [
-    ("src/auth/auth.py", [("Session", 3, 6), ("Session.refresh", 4, 6), ("login", 9, 10)]),
+    ("src/auth/auth.py", [("Session", 3, 6), ("Session.refresh", 4, 6), ("Session.refresh.inner", 5, 6), ("login", 9, 10)]),
     ("src/api/svc.ts", [("Svc", 1, 3), ("Svc.run", 2, 2), ("handler", 4, 4),
                         ("describe('x')", 5, 5), ("it('y')", 5, 5)]),
     ("web/main.go", [("S", 3, 3), ("S.Do", 5, 5), ("Top", 7, 7)]),
@@ -262,7 +262,7 @@ def test_index_preserves_human_text(project):
 def test_index_refreshes_catalog_and_reports_it(project, capsys):
     init(project)
     out = output(capsys, project, "index", "--all")
-    assert re.search(r"^\[catalog\] 23 definitions in 7 files$", out, re.MULTILINE), out
+    assert re.search(r"^\[catalog\] 24 definitions in 7 files$", out, re.MULTILINE), out
     assert (project / ".librarian/catalog.json").is_file()
 
 
@@ -551,7 +551,8 @@ def test_find_groups_by_folder_with_role_heading(project, capsys):
                    "     4\t    def refresh(self):",
                    "     5\t        def inner():",
                    "     6\t            pass",
-                   "src/auth/auth.py:4-6 Session.refresh"]
+                   "src/auth/auth.py:4-6 Session.refresh",
+                   "src/auth/auth.py:5-6 Session.refresh.inner"]
     out = output(capsys, project, "find", "^(svc|top)$").splitlines()
     assert out == ["[src/api/]", "src/api/svc.ts:1-3 Svc", "     1\texport class Svc {",
                    "     2\t  run(): void {}", "     3\t}",
@@ -587,7 +588,7 @@ def test_grep_groups_matches_under_enclosing_definition(project, capsys):
     assert out[:7] == ["[src/auth/] Login.",
                        "src/auth/auth.py (outside any definition)",
                        "  1: import os",
-                       "src/auth/auth.py:4-6 Session.refresh",
+                       "src/auth/auth.py:5-6 Session.refresh.inner",
                        "  6: pass",
                        "src/auth/auth.py:9-10 login",
                        "  9: def login(user):"]

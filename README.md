@@ -96,7 +96,7 @@ and `test(title, details, callback)` are supported. Imports and aliases are not 
 the scanner recognizes these callee names by syntax. Dynamic titles, `each` factories,
 expression callbacks, callback references, and hooks such as `beforeEach` are omitted.
 C catalogs include K&R-style definitions, whose parameter declarations sit between `)` and `{`.
-Definitions inside a function body are not cataloged; use the `grep` command for those. `find '^name$'` also matches methods, whose catalog names carry their class (`Class.name`).
+Python catalogs include definitions nested in functions, named `outer.inner`. In the other languages, definitions inside a function body are not cataloged; use the `grep` command for those. `find '^name$'` also matches methods, whose catalog names carry their class (`Class.name`).
 
 Installing the library adds the following to your project:
 
