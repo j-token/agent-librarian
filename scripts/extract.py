@@ -956,6 +956,9 @@ class _Scanner:
 
     def run(self) -> list[tuple[str, int, int]]:
         header: list = []
+        # A K&R C definition while its parameter declarations are read: (head tokens,
+        # parameter names, the held-back statement and its last line).
+        kr = None
         pdepth = 0
         prev_line = 0
         asi = self.lang in JS_LANGS or self.lang == "go"
@@ -996,6 +999,12 @@ class _Scanner:
                 header = []
                 continue
 
+            if kr is not None and s in ("{", "}"):
+                if s == "{" and not header:
+                    header = kr[0]  # the body of a K&R definition: `f(a) int a; {`
+                else:  # not a definition after all: report the statement held back
+                    self.bodiless(kr[2], kr[3])
+                kr = None
             if s == "{":
                 test_callback = self._js_test_callback(header, tok) if self.lang in JS_LANGS else None
                 if test_callback:
@@ -1017,8 +1026,17 @@ class _Scanner:
                         header, pdepth = top.saved
                         header.append(("{}", tok[LN], tok[ST], tok[EN]))
             elif s == ";" and pdepth == 0:
-                self.bodiless(header, tok[LN])
-                header = []
+                if kr is not None and not self._kr_param_decl(header, kr[1]):
+                    self.bodiless(kr[2], kr[3])
+                    kr = None
+                if kr is None:
+                    if self.lang == "c" and top.kind == "file":
+                        head = self._kr_head(header)
+                        if head is not None:
+                            kr = (head, self._kr_params(head), header, tok[LN])
+                    if kr is None:
+                        self.bodiless(header, tok[LN])
+                header = []  # a K&R parameter declaration is dropped; its head is kept
             elif s == "," and pdepth == 0 and top.kind == "jsobject":
                 header = []
             else:
@@ -1063,6 +1081,39 @@ class _Scanner:
         if last in self._JS_DECL_WORDS and before not in (".", "let", "const", "var"):
             return False  # `export` + newline + `function f`, but not `x.default` or `let async`
         return True
+
+    @staticmethod
+    def _kr_params(head) -> set:
+        open_ = next(k for k, tok in enumerate(head) if tok[T] == "(")
+        return {tok[T] for tok in head[open_ + 1:] if _is_ident(tok[T])}
+
+    @staticmethod
+    def _kr_param_decl(header, params: set) -> bool:
+        """Does a statement declare one of the K&R parameters, like `register char *p`?"""
+        texts = [tok[T] for tok in header]
+        return "=" not in texts and any(t in params for t in texts)
+
+    @staticmethod
+    def _kr_head(header):
+        """The `type name(a, b)` part of a header that continues with a K&R parameter
+        declaration such as `int a, b`, or None. A prototype ends at its `)` instead."""
+        if len(header) < 4 or header[0][T] == "#":
+            return None
+        open_ = next((k for k, tok in enumerate(header) if tok[T] == "("), None)
+        if open_ is None or open_ == 0 or not _is_ident(header[open_ - 1][T]):
+            return None
+        close = next((k for k in range(open_ + 1, len(header)) if header[k][T] == ")"), None)
+        if close is None or close + 1 >= len(header) or not _is_ident(header[close + 1][T]):
+            return None
+        params = [tok[T] for tok in header[open_ + 1:close]]
+        if not params or params[0] == "void":
+            return None
+        if any(not (_is_ident(p) if k % 2 == 0 else p == ",") for k, p in enumerate(params)):
+            return None
+        # the rest must declare a parameter: `int a, b`, unlike `PyAPI_FUNC(int) f(void)`
+        if not _Scanner._kr_param_decl(header[close + 1:], set(params[::2])):
+            return None
+        return header[:close + 1]
 
     def literal_between(self, header, tok) -> bool:
         """Was a (masked) literal the last thing before tok? It then acts as an operand."""

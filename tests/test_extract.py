@@ -407,6 +407,47 @@ def test_c():
     assert names(src, "c") == [("make_point", 5, 5), ("main", 7, 10), ("helper", 11, 11)]
 
 
+def test_c_k_and_r_definitions():
+    src = (
+        "STATIC_DCL boolean FDECL(onscary, (int, int, struct monst *));\n"
+        "int old_proto();\n"
+        "boolean\n"
+        "onscary(x, y, mtmp)\n"
+        "register int x, y;\n"
+        "struct monst *mtmp;\n"
+        "{\n"
+        "    return x > y;\n"
+        "}\n"
+        "void\n"
+        "noargs()\n"
+        "{\n"
+        "}\n"
+        "int ansi(a) int a; { return a; }\n"
+        "int after(void) { return 0; }\n"
+    )
+    assert names(src, "c") == [
+        ("onscary", 4, 9), ("noargs", 11, 13), ("ansi", 14, 14), ("after", 15, 15)]
+
+
+def test_c_macro_declarations_are_not_k_and_r_heads():
+    src = (
+        "PyAPI_FUNC(int) Py_Foo(void);\n"
+        "int real_one(void)\n"
+        "{\n"
+        "}\n"
+        "static TAILQ_HEAD(tailhead, entry) head;\n"
+        "struct entry { int v; };\n"
+        "LIST_HEAD(name) list;\n"
+        "int after(void) { return 0; }\n"
+        "int kr(a) int a;\n"
+        "int not_a_param;\n"
+        "int last(void) { return 1; }\n"
+    )
+    found = [n for n, _, _ in names(src, "c")]
+    assert "real_one" in found and "after" in found and "last" in found
+    assert not {"PyAPI_FUNC", "TAILQ_HEAD", "LIST_HEAD", "kr"} & set(found)
+
+
 def test_cpp():
     src = (
         "MACRO_WITHOUT_SEMICOLON(x)\n"
