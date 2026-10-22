@@ -10,7 +10,7 @@
     {
       "name": "agent-librarian",
       "source": "./",
-      "description": "Organizes a codebase like a library with a CLAUDE.md/AGENTS.md in every folder and a file · function · line index."
+      "description": "Organizes a codebase like a library: a CLAUDE.md with each code folder's role and an on-demand file · symbol · line catalog."
     }
   ]
 }

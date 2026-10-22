@@ -1,6 +1,6 @@
 ---
 name: rebuild-library
-description: Scans an existing codebase and builds (or rebuilds) a agent-librarian library. A script generates the index; agents fill in folder roles, deepest folders first.
+description: Scans an existing codebase and builds (or rebuilds) an agent-librarian library. A script generates the documents and the code catalog; agents fill in folder roles, deepest folders first.
 disable-model-invocation: true
 ---
 
@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 ## 0. Cost warning
 
-Before starting, tell the user: this reads the whole codebase and writes a role for every folder, so token cost grows with the number of folders. In Claude Code it uses Sonnet subagents.
+Before starting, tell the user: this writes a role for every folder that holds code, so token cost grows with the number of such folders. In Claude Code it uses Sonnet subagents. Run `python <plugin>/scripts/librarian.py pending` after step 2 to show how many folders need a role.
 
 ## 1. Questions and dependencies
 
@@ -19,12 +19,12 @@ Follow steps 1–2 of `<plugin>/skills/build-library/SKILL.md` exactly. The libr
 ## 2. Generate the mechanical parts first
 
 ```bash
-python <plugin>/scripts/librarian.py init --language <answer 1> --doc <answer 2> [--exclude <answer 3>...]
+python <plugin>/scripts/librarian.py init --language <answer 1> [--exclude <answer 2>...]
 python <plugin>/scripts/librarian.py scaffold
 python <plugin>/scripts/librarian.py index --all
 ```
 
-After this, every folder has a document and every index (file · function or Markdown heading or CSS rule · start line · end line) is filled in. If an index would exceed `maxDocLines` (default 200), it moves into `index.md` and, if needed, per-file indexes in `index/`. If the language changed, existing documents switch their generated headings to the new language, and roles and Notes already written are kept.
+After this, the root and every folder that holds code have a `CLAUDE.md`, and the catalog lists every definition. If the language changed, existing documents switch their generated headings to the new language, and roles and Notes already written are kept. Documents from older versions lose their generated index block, and generated `index.md` and `index/` files are removed.
 
 ## 3. Fill in roles (deepest folders first)
 
@@ -45,6 +45,6 @@ python <plugin>/scripts/librarian.py check
 Report to the user:
 - How many documents were created
 - Any remaining `role needed` entries
-- Any folder depth or document length warnings (`warning`). Do not restructure folders; use the `rule-creator` skill to shorten long rules while keeping non-Claude and shared rules in root `AGENTS.md`.
+- Any folder depth or document length warnings (`warning`). Do not restructure folders; use the `rule-creator` skill to shorten long rules.
 
 Then give the same wrap-up as step 5 of build-library.

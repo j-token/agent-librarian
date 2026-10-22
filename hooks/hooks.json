@@ -5,20 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','session-start'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','session-start'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/librarian.py\" hook session-start || python \"${CLAUDE_PLUGIN_ROOT}/scripts/librarian.py\" hook session-start",
             "timeout": 30
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|apply_patch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','post-edit'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','post-edit'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
-            "timeout": 60
           }
         ]
       }
@@ -28,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','stop'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\" || python -c \"import os,runpy,sys;r=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.environ['PLUGIN_ROOT'];sys.argv=['librarian','hook','stop'];runpy.run_path(os.path.join(r,'scripts','librarian.py'),run_name='__main__')\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/librarian.py\" hook stop || python \"${CLAUDE_PLUGIN_ROOT}/scripts/librarian.py\" hook stop",
             "timeout": 120
           }
         ]

@@ -18,7 +18,11 @@
 
 ## 도서관은 이렇게 생겼습니다
 
-폴더마다 주 문서(`CLAUDE.md` 또는 `AGENTS.md`)가 하나씩 있습니다. `both` 모드에서는 `AGENTS.md`를 가리키는 `CLAUDE.md` 참조 파일도 생깁니다.
+실제 도서관처럼 두 부분으로 이루어집니다. 폴더마다 무엇을 보관하는지 적어 둔 **서가**와, 특정 책을 찾을 때 조회하는 **목록(카탈로그)**입니다.
+
+### 서가: 코드가 있는 폴더마다 `CLAUDE.md` 하나
+
+루트와 코드가 있는 모든 폴더에 `CLAUDE.md`가 있습니다. 문서나 에셋만 있는 폴더에는 만들지 않습니다.
 
 ```markdown
 # 상위 문서: ../CLAUDE.md
@@ -32,88 +36,92 @@
 ## 하위 폴더
 | 폴더 | 역할 |
 |---|---|
-| tax/ | 세금 계산 |                              ← 에이전트/사람이 작성
-
-<!-- librarian:index:start -->
-| 파일 | 함수 | 시작 줄 | 끝 줄 |
-|---|---|---|---|
-| invoice.py | Invoice.total | 2 | 9 |          ← 스크립트가 자동 생성
-<!-- librarian:index:end -->
+| tax/ | 세금 계산 |                              ← 행은 스크립트가 유지, 역할은 에이전트/사람이 작성
 ```
 
-설치 명령은 가장 먼저 **도서관 언어**를 묻습니다. 폴더 문서를 어떤 언어로 쓸지 정하는 질문입니다.
-- 영어와 한국어는 제목이 내장되어 있습니다. 위 예시는 한국어를 골랐을 때의 모습입니다.
-- 다른 언어도 고를 수 있습니다. 이때 제목은 영어로 두고, 역할은 그 언어로 씁니다.
-- 언어는 나중에 `/rebuild-library`를 다시 실행해서 바꿀 수 있습니다. 이미 쓴 역할은 그대로 유지됩니다.
+설치 명령은 가장 먼저 **도서관 언어**를 묻습니다. 폴더 문서를 어떤 언어로 쓸지 정하는 값입니다. 영어와 한국어는 제목이 내장되어 있습니다. 다른 언어도 받으며, 그때는 제목은 영어로 두고 역할만 그 언어로 씁니다. 나중에 `/rebuild-library`를 다시 실행해 언어를 바꿀 수 있고, 이미 쓴 역할은 그대로 남습니다.
 
-- 루트의 하위 폴더 표에는 최상위 폴더들의 역할만 적습니다. 다른 폴더 문서의 표에는 바로 아래 폴더들의 역할만 적습니다.
-- 파일 · 항목 · 시작 줄 · 끝 줄은 스크립트가 만듭니다. 에이전트는 해당 줄 범위의 원본 파일을 열어서 읽습니다. **함수가 무엇을 하는지는 적지 않습니다.** AI가 함수를 잘못 이해해서 틀린 설명을 적는 일(환각)을 막기 위해서입니다.
-- 메모에는 코드만으로 알기 어려운 배경을 적습니다. Claude Code만 쓰는 도서관에서는 폴더별 작업 규칙도 적을 수 있습니다. 사람이나 에이전트가 작성하고 스크립트가 보존합니다.
-- 파일을 편집하면 훅이 줄 번호를 바로 갱신합니다. 턴이 끝날 때마다 check 훅이 문서와 코드가 어긋난 곳을 고치고, 역할이 비어 있는 폴더가 있으면 채우라고 요청합니다.
-- 세션을 시작할 때 폴더 문서나 Markdown 규칙 파일이 `maxDocLines`보다 길면 훅이 경고합니다. `check` 명령도 같은 경고를 표시합니다. 에이전트는 `rule-creator`로 긴 규칙을 주제별로 옮길 수 있습니다. 스크립트가 사람이 쓴 규칙을 자동으로 고치지는 않습니다.
-- 설계 근거는 [지식 관리 이론 조사](docs/research/knowledge-management.md)에 정리했습니다.
+- 루트의 하위 폴더 표는 최상위 폴더만, 그 밖의 하위 폴더 표는 바로 아래 폴더만 설명합니다.
+- 메모 섹션에는 코드만 봐서는 알 수 없는 맥락과 폴더 작업 규칙을 적습니다.
+- Claude Code는 어떤 폴더의 파일을 읽을 때마다 그 폴더와 모든 상위 폴더의 `CLAUDE.md`를 불러옵니다. 그래서 문서를 짧게 유지합니다. `maxDocLines`(기본 60)는 하위 폴더 표의 행을 뺀, 사람이 쓴 글의 길이를 제한합니다.
 
-JavaScript/TypeScript 인덱스에는 리터럴 제목을 받는 `test`, `it`, `describe`,
-`test.describe` 호출의 익명 블록 콜백도 `test('example')` 같은 이름으로 기록합니다.
-시작 줄은 호출 대상이 시작하는 줄이고, 끝 줄은 콜백 본문을 닫는 중괄호의 줄입니다.
-테스트 묶음 안의 테스트도 기록합니다. 따옴표 문자열과 정적 템플릿 리터럴,
-`only`, `skip`, `concurrent`, `sequential` 변형을 지원합니다. 테스트는 `fixme`,
-`fail`, `fails`, 테스트 묶음은 `serial`, `parallel`도 지원합니다. async 화살표 함수,
-익명 함수와 `test(title, details, callback)` 형태를 지원합니다. import나 별칭을
-해석하지 않고 호출 이름과 구문으로 판별합니다. 동적 제목, `each` 팩터리, 표현식
-콜백, 콜백 참조와 `beforeEach` 같은 훅은 기록하지 않습니다.
+### 목록: 필요할 때만 조회하는 정의 위치
 
-### 긴 폴더의 인덱스 나누기
+스크립트가 모든 정의를 `파일 · 항목 · 시작 줄 · 끝 줄` 형태로 `.librarian/catalog.json`에 기록합니다. 목록은 코드에서 다시 만들 수 있는 파생 데이터입니다. `.librarian/.gitignore`로 git에서 제외하고, `CLAUDE.md`에는 쓰지 않습니다. 세션이 시작되면 훅이 에이전트에게 조회 방법을 알려 줍니다.
 
-`maxDocLines`의 기본값은 200입니다. 생성된 인덱스 때문에 폴더 문서가 길어지면 스크립트가 다음 단계로 나눕니다.
+```text
+$ python scripts/librarian.py find '^onscary$'
+[src/] The platform-independent C source of the game itself.
+src/monmove.c:135-182 onscary
+   135	onscary(x, y, mtmp)
+   136	int x, y;
+   ...
 
-1. 폴더의 `CLAUDE.md` 또는 `AGENTS.md`에는 역할, 메모, 하위 폴더 표와 `index.md` 링크를 둡니다.
-2. `index.md`에는 인덱스 표를 둡니다. 이 파일도 길어지면 파일별 인덱스 링크로 바꿉니다.
-3. 두 번째 단계가 필요할 때 `index/` 아래에 원본 파일별 인덱스를 만듭니다.
+$ python scripts/librarian.py outline src/pray.c
+[src/] The platform-independent C source of the game itself.
+src/pray.c
+  102-141 critically_low_hp
+  183-269 in_trouble
+  ...
 
-에이전트는 폴더 문서와 `index.md`를 읽고, 필요한 파일의 인덱스만 더 열면 됩니다. 인덱스가 짧아지면 스크립트가 다시 합칩니다. 줄 수 제한은 인덱스를 나누는 기준이지만, 파일 하나의 인덱스나 파일 링크 목록이 아주 길면 마지막 단계에서도 제한을 넘을 수 있습니다. 이때 스크립트가 경고합니다.
+$ python scripts/librarian.py grep 'u\.uluck = 0' src
+[src/] The platform-independent C source of the game itself.
+src/pray.c:923-1228 pleased
+  1117: u.uluck = 0;
+src/pray.c:1327-1792 dosacrifice
+  1706: u.uluck = 0;
+  1740: u.uluck = 0;
+  1778: u.uluck = 0;
+src/pray.c:1846-1883 dopray
+  1862: u.uluck = 0;
+```
 
-스크립트는 `<!-- librarian:generated -->` 표시가 있는 파일만 덮어쓰거나 지웁니다. 사용자가 만든 `index.md`, 또는 사용자 파일이나 심볼릭 링크가 들어 있는 `index/`가 있으면 그 단계로 나누지 않고 경고를 표시합니다. 생성된 인덱스 블록, `index.md`, `index/`의 파일은 직접 수정하지 마세요.
+- 일치하는 정의가 3개 이하이면 `find`가 코드도 함께 보여 줍니다(정의당 최대 60줄). 그래서 조회 한 번이 도구 호출 두 번이 아니라 한 번으로 끝납니다. 그 밖에는 에이전트가 파일 전체 대신 알려 준 줄 범위만 읽습니다. **목록은 함수가 무엇을 하는지 적지 않습니다.** AI가 함수를 잘못 읽고 틀린 설명을 적는 환각을 막기 위해서입니다.
+- 결과마다 그 폴더의 역할이 함께 나오므로, 경로에 있는 문서를 모두 불러오지 않아도 서가의 맥락을 알 수 있습니다.
+- 목록은 조회할 때 스스로 갱신됩니다. 수정 시각이나 크기가 바뀐 파일만 다시 읽습니다.
+- `grep`은 코드 파일에서 정규식에 맞는 줄을 찾아, 각 줄을 그 줄이 들어 있는 정의 아래에 묶어 보여 줍니다. 그래서 어떤 함수를 누가 호출하는지, 어떤 필드를 누가 바꾸는지를 Grep과 추가 읽기 없이 한 번에 찾습니다. 문서처럼 코드가 아닌 파일은 Grep으로 찾습니다. 설계 근거는 [지식 관리 이론 조사](docs/research/knowledge-management.md)에 정리되어 있습니다.
 
-설치하면 프로젝트에 아래 파일들이 생깁니다.
+### 훅
+
+- **세션 시작**: 조회 방법을 알려 주고, 목록을 백그라운드에서 갱신하고, `maxDocLines`보다 긴 폴더 문서나 Markdown 규칙 파일을 경고합니다.
+- **매 턴 종료**: 새 코드 폴더에 문서를 만들고, 하위 폴더 표를 고치고, 빈 역할을 채우라고 요청합니다. 한 번에 최대 10개 폴더만 나열합니다.
+
+JavaScript/TypeScript 목록에는 리터럴 제목을 쓴 `test`, `it`, `describe`, `test.describe`
+호출의 익명 블록 콜백도 들어갑니다. 예를 들어 `test('example')`입니다. 항목은 호출 대상에서
+시작해 콜백의 닫는 중괄호에서 끝나며, 스위트 항목은 안쪽 테스트 항목을 포함합니다. 따옴표
+문자열과 정적 템플릿 리터럴을 지원하고 `only`, `skip`, `concurrent`, `sequential`도
+지원합니다. 테스트는 `fixme`, `fail`, `fails`를, 스위트는 `serial`, `parallel`을 추가로
+받습니다. async 화살표 함수, 익명 함수, `test(title, details, callback)` 형식도 지원합니다.
+import와 별칭은 해석하지 않고 호출 이름의 문법만 보고 인식합니다. 동적 제목, `each` 팩토리,
+표현식 콜백, 콜백 참조, `beforeEach` 같은 훅은 제외합니다.
+C 목록에는 `)`와 `{` 사이에 매개변수 선언이 오는 K&R 형식 정의도 들어갑니다.
+Python 목록에는 함수 안에 정의된 함수와 클래스도 `outer.inner` 이름으로 들어갑니다. 다른 언어에서는 함수 본문 안의 정의가 목록에 없으므로 `grep` 명령으로 찾습니다. 메서드는 목록에 `Class.name`처럼 클래스 이름이 붙지만 `find '^name$'`로도 찾을 수 있습니다.
+
+도서관을 설치하면 프로젝트에 다음이 추가됩니다.
 
 ```
-.librarian/config.json                  # 도서관 언어, 문서 이름, 제외 경로, 폴더 깊이 경고 기준(maxDepth),
-                                        # 문서 줄 수 제한(maxDocLines, 기본값 200), 플러그인 버전(libraryVersion)
-<모든 폴더>/CLAUDE.md 또는 AGENTS.md    # 폴더 문서
+.librarian/config.json      # 도서관 언어, 제외할 경로, 폴더 깊이 경고 기준(maxDepth),
+                            # 문서 줄 수 제한(maxDocLines, 기본 60), 플러그인 버전(libraryVersion)
+.librarian/.gitignore       # catalog.json을 git에서 제외
+.librarian/catalog.json     # 파생 데이터, 자동으로 다시 만들어짐
+<코드가 있는 모든 폴더>/CLAUDE.md
 ```
 
 ## 규칙 작성 스킬
 
-`rule-creator`는 같은 실수가 반복될 수 있을 때 작업 규칙이나 빠져 있던 배경 정보를 기록하는 스킬입니다. 사용자가 든 구체적인 사례에서 공통 원인을 찾고, 같은 규칙이 이미 있는지 확인한 뒤, 적용할 행동과 이유를 적습니다.
-
-Codex나 다른 에이전트, 또는 Claude Code와 함께 지킬 규칙은 **프로젝트 루트 `AGENTS.md`의 메모**에 씁니다. 특정 경로나 명령에만 적용된다면 규칙 본문에 그 범위를 적습니다. `both`에서는 `CLAUDE.md`가 `@AGENTS.md`를 참조합니다. `CLAUDE.md`만 관리하는 도서관도 문서 형식을 바꾸지 않고 별도의 루트 `AGENTS.md`를 둘 수 있습니다. Claude Code에만 필요한 규칙은 폴더 `CLAUDE.md`의 메모나 `.claude/rules/`에 둘 수 있고, 후자에는 `paths`로 적용 파일을 지정할 수 있습니다. Claude Code의 `paths` 기능을 Codex의 규칙 로딩 기능으로 간주하지 않습니다.
-
-길이 검사는 루트 `AGENTS.md`, 다른 관리 대상 폴더 문서에서 생성 인덱스를 뺀 본문, `.claude/rules/` 아래의 Markdown 파일에 적용됩니다. 공유 규칙이 길면 핵심 행동은 루트 `AGENTS.md`에 남기고 중복을 줄입니다. 자세한 배경은 일반 문서로 옮기되, 언제 그 문서를 읽어야 하는지 루트 규칙에 분명히 적습니다. 스크립트는 경고만 표시하며 사람이 쓴 규칙을 자동으로 고치지 않습니다.
+`rule-creator` 스킬은 실수가 반복될 것 같을 때 규칙이나 빠진 맥락을 기록합니다. 구체적인 사례 뒤에 있는 일반적인 상황을 찾고, 기존 규칙을 확인한 뒤, 이유가 담긴 실행 가능한 지시 하나를 씁니다. 규칙은 필요할 때 Claude Code가 불러오는 가장 좁은 곳에 둡니다. 루트나 폴더 `CLAUDE.md`의 메모, 또는 `paths` frontmatter를 쓸 수 있는 `.claude/rules/`입니다. 문서가 `maxDocLines`를 넘으면 주제별로 묶어 옮깁니다. 스크립트는 경고만 하고 사람이 쓴 규칙을 고쳐 쓰지 않습니다.
 
 ## 요구 사항
 
-- Python 3.9 이상. 그 밖에 설치할 것은 없습니다. 인덱스는 Python 표준 라이브러리만으로 만듭니다.
-- 지원 언어: Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#, CSS, Markdown
-  - Markdown에서는 제목과 해당 절의 시작·끝 줄을 인덱싱합니다.
-  - CSS에서는 선택자와 `@media` 같은 규칙의 시작·끝 줄을 인덱싱합니다.
-
-이 플러그인은 각 도구의 기본 플러그인 형식을 사용합니다. Codex는 `.codex-plugin/plugin.json`, Claude Code는 `.claude-plugin/plugin.json`을 읽으며, 두 도구가 스킬·스크립트·`hooks/hooks.json`을 공유합니다.
-
-### Codex에서 쓸 때
-
-- **0.6.0**은 루트의 Agent Plugins 형식으로 플러그인을 불러왔지만 훅은 누락됐습니다. 이 저장소의 **0.6.1**에서는 기본 플러그인 형식으로 바꿔 훅을 불러오도록 수정했습니다. 마켓플레이스 설치에 반영하려면 먼저 이 변경을 배포해야 합니다. [이슈 #4](https://github.com/j-token/agent-librarian/issues/4)를 참고하세요.
-- 설치하거나 업데이트한 뒤 Codex를 재시작하고, `/hooks`에서 이 플러그인의 훅을 확인하고 신뢰(trust)해야 실행됩니다. 목록에는 `agent-librarian`의 `SessionStart`, `PostToolUse`, `Stop`이 표시되어야 합니다.
-- 검사한 Codex 실행 환경에서는 훅 기능이 기본으로 켜져 있습니다. 직접 끈 경우에만 `~/.codex/config.toml`의 `[features]`에서 `hooks`를 켜세요. 삭제된 `plugin_hooks` 설정을 바꿀 필요는 없습니다.
-- `/rebuild-library`는 실행 환경에서 하위 에이전트를 지원하면 같은 깊이의 폴더를 병렬로 처리할 수 있습니다. 각 깊이를 끝낸 뒤 부모 폴더로 올라갑니다.
+- Claude Code
+- Python 3.9 이상. 그 밖에 설치할 것은 없습니다. 목록은 Python 표준 라이브러리만으로 만듭니다.
+- 지원 언어: Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++(K&R C 포함), C#, CSS. `outline`은 Markdown 파일의 제목도 보여 줍니다.
 
 ## 사람을 위한 지침
 
 ### 설치
 
-Python 3.9 이상만 있으면 됩니다.
-
-**Claude Code**: Claude Code 안에서 아래 명령어를 입력한 다음 `/reload-plugins`를 실행하세요.
+Python 3.9 이상만 있으면 됩니다. Claude Code 안에서 아래 명령어를 입력한 다음 `/reload-plugins`를 실행하세요.
 
 ```
 /plugin marketplace add j-token/agent-librarian
@@ -127,21 +135,11 @@ claude plugin marketplace add j-token/agent-librarian
 claude plugin install agent-librarian@agent-librarian
 ```
 
-**Codex**: 터미널에서 아래 명령어를 입력하세요.
-
-```bash
-codex plugin marketplace add j-token/agent-librarian
-codex plugin add agent-librarian@agent-librarian
-```
-
-Codex를 재시작한 뒤 `/hooks`에서 이 플러그인의 훅을 확인하고 신뢰(trust)하세요. 설치된 버전이 아직 0.6.0이면 0.6.1이 배포된 뒤 아래 업데이트 지침을 따르세요.
-
 설치가 끝나면 아래 명령어로 여러분을 위한 "도서관"을 지으세요.
 
 ### 기존 코드 베이스가 있는 경우
 
-> 주의! 이 명령어를 사용하면 플러그인 내의 sonnet 5 에이전트가 동작하여 코드 베이스를 전체적으로 스캔하여 인덱싱합니다. 이로 인해 추가 요금이 부과될 수 있으니 주의하세요!
-
+> 경고! 이 명령어는 플러그인의 Sonnet 에이전트로 코드가 있는 모든 폴더의 역할을 작성합니다. 추가 요금이 발생할 수 있으니 주의하세요!
 
 1. 아래 명령어를 입력합니다.
 
@@ -149,7 +147,7 @@ Codex를 재시작한 뒤 `/hooks`에서 이 플러그인의 훅을 확인하고
 
 2. 필요한 질문에 응답해주세요. 첫 질문은 도서관 언어입니다.
 
-3. 각 CLAUDE.md 또는 AGENTS.md에 적힌 폴더 역할이 적절한지 확인하세요.
+3. 각 CLAUDE.md에 적힌 폴더 역할이 적절한지 확인하세요.
 
 ### 기존 코드 베이스가 없는 경우
 
@@ -159,20 +157,15 @@ Codex를 재시작한 뒤 `/hooks`에서 이 플러그인의 훅을 확인하고
 
 2. 필요한 질문에 응답해주세요. 첫 질문은 도서관 언어입니다.
 
-3. 루트의 CLAUDE.md 또는 AGENTS.md와 `.librarian/config.json`의 설정을 확인하세요.
+3. 루트의 CLAUDE.md와 `.librarian/config.json`의 설정을 확인하세요.
 
 ### 플러그인을 업데이트한 뒤
 
-**Codex**는 터미널에서 마켓플레이스를 갱신한 뒤 최신 배포 버전을 설치하세요.
+`/plugin update agent-librarian@agent-librarian`을 실행한 뒤 플러그인을 다시 불러오거나 Claude Code를 재시작하세요.
 
-```bash
-codex plugin marketplace upgrade agent-librarian
-codex plugin add agent-librarian@agent-librarian
-```
+플러그인을 업데이트해도 이미 만든 도서관은 바뀌지 않습니다. 업데이트한 뒤에는 `/update-library`를 실행하세요. 도서관이 예전 버전으로 만들어졌으면 매 턴 종료 훅도 알려 줍니다. 이 스킬은 설정 항목을 현재 버전에 맞추고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고치고, 목록을 만듭니다.
 
-Codex를 재시작하고 `/hooks`에서 갱신된 훅을 확인하세요. **Claude Code**는 `/plugin update agent-librarian@agent-librarian`을 실행한 뒤 플러그인을 다시 불러오거나 Claude Code를 재시작하세요.
-
-플러그인을 업데이트해도 이미 만든 도서관은 바뀌지 않습니다. 업데이트한 뒤에는 `/update-library`를 실행하세요. check 훅도 도서관이 예전 버전으로 만들어졌으면 알려 줍니다. 이 스킬은 설정 항목을 현재 버전에 맞추고, 이미 쓴 역할은 그대로 둔 채 모든 폴더 문서를 현재 형식으로 고칩니다. 예전 버전으로 만든 도서관에는 관리지침 스킬(`librarian-guide`)이 있었습니다. `/update-library`(`/rebuild-library`도 마찬가지)는 그 스킬의 연결과 `.gitignore` 항목을 지우고, `.librarian/skills/librarian-guide`는 직접 추가한 내용을 옮긴 뒤 지우라고 알려 줍니다.
+0.6 이하에서 올라오는 경우, 모든 `CLAUDE.md`에서 생성된 인덱스가 빠지고 생성된 `index.md`, `index/` 파일은 지워집니다. 정의 위치는 목록으로 옮겨 갑니다. `AGENTS.md`에 있던 폴더 문서는 `CLAUDE.md`로 옮겨집니다. 예전 버전이 코드가 없는 폴더에 만든 문서는 지우지 않고 알려만 줍니다. 예전 버전으로 만든 도서관에는 관리지침 스킬(`librarian-guide`)이 있었습니다. `/update-library`는 그 스킬의 연결과 `.gitignore` 항목을 지우고, `.librarian/skills/librarian-guide`는 직접 추가한 내용을 옮긴 뒤 지우라고 알려 줍니다.
 
 ## 에이전트를 위한 지침
 
@@ -181,26 +174,23 @@ Codex를 재시작하고 `/hooks`에서 갱신된 훅을 확인하세요. **Clau
 ### 사용자를 위해 설치할 때
 
 1. `python --version`이 3.9 이상인지 확인합니다. Python이 없으면 사용자에게 설치를 요청합니다. 그 밖의 의존성은 없습니다.
-2. 위 "설치"의 터미널 명령으로 플러그인을 설치합니다. Claude Code는 `claude plugin …` 명령을, Codex는 `codex plugin …` 명령을 씁니다.
+2. 위 "설치"의 `claude plugin …` 터미널 명령으로 플러그인을 설치합니다.
 3. 에이전트가 직접 할 수 없어서 사용자에게 요청해야 하는 단계가 있습니다.
-   - Claude Code에서 `/reload-plugins` 실행
-   - Codex 재시작, `/hooks`에서 이 플러그인의 훅 확인 및 신뢰
+   - `/reload-plugins` 실행
    - `/rebuild-library`(기존 코드베이스) 또는 `/build-library`(새 프로젝트) 실행. 이 스킬들은 모델이 호출할 수 없고, 도서관 언어 같은 질문을 사용자에게 합니다.
-4. `/rebuild-library`는 코드베이스 전체를 읽으므로 폴더 수에 비례해 토큰 비용이 든다고 사용자에게 알립니다.
+4. `/rebuild-library`는 코드가 있는 폴더 수에 비례해 토큰 비용이 든다고 사용자에게 알립니다.
 
 ### 도서관이 있는 프로젝트에서 작업할 때
 
 루트에 `.librarian/config.json`이 있으면 도서관이 있는 프로젝트입니다. 손볼 곳이 생기면 훅이 알려 줍니다. 핵심은 다음과 같습니다.
 
-- 폴더 문서에는 폴더의 역할과 `파일 · 항목 · 시작 줄 · 끝 줄`이 적혀 있습니다. 무언가에 의존하기 전에 원본 파일의 해당 줄 범위를 직접 읽습니다. 함수 이름만 보고 동작을 추측하지 않습니다.
-- 함수나 파일이 무엇을 하는지 적지 않습니다. `<!-- librarian:index:start/end -->` 블록과 생성된 `index.md`, `index/` 파일은 수정하지 않습니다. 훅이 최신 상태로 유지합니다.
-- 폴더를 새로 만들면 그 폴더의 역할 섹션과 부모 문서 하위 폴더 표의 역할 칸을 도서관 언어(`.librarian/config.json`의 `language`)로 채웁니다.
-- Stop 훅이 빈 역할을 채우라고 요청하면 코드를 읽고 채웁니다. 폴더의 역할만 씁니다.
-- 역참조(누가 무엇을 호출하는지)는 grep이나 LSP로 조회합니다. 문서에는 기록하지 않습니다.
+- 이름으로 정의를 찾을 때는 세션 시작 안내의 `find` 명령을, 파일이나 폴더에 무엇이 정의되어 있는지 볼 때는 `outline`을 씁니다. 그다음 알려 준 범위를 읽습니다. 함수 이름만 보고 동작을 추측하지 않습니다.
+- 코드 안의 호출 위치, 필드 변경, 문자열은 `grep` 명령으로 찾습니다. 일치한 줄마다 그 줄을 담은 함수가 함께 나옵니다. 다른 파일은 Grep으로 찾습니다. 역참조는 어디에도 기록하지 않습니다.
+- 문서에 함수나 파일이 무엇을 하는지 적지 않고, `.librarian/catalog.json`은 수정하지 않습니다.
+- 코드 폴더를 새로 만들면 그 폴더의 역할 섹션과 부모 문서 하위 폴더 표의 역할 칸을 도서관 언어(`.librarian/config.json`의 `language`)로 채웁니다. 매 턴 종료 훅이 빈 역할을 채우라고 요청하면 코드를 읽고 폴더의 역할만 씁니다.
 - 훅이 폴더 깊이 초과를 경고하면 사용자에게 알립니다. 폴더 구조는 임의로 바꾸지 않습니다.
-- 훅이 사람이 쓴 문서 본문의 길이를 경고하면 `rule-creator`로 적용 대상과 범위를 지키면서 내용을 묶고 줄입니다.
-- Codex나 두 도구가 함께 지킬 작업 규칙은 `rule-creator`로 루트 `AGENTS.md`의 메모에 적고, 해당 경로를 규칙 본문에 밝힙니다. `both`에서는 `CLAUDE.md` 참조 파일을 수정하지 않습니다.
-- Stop 훅이 도서관이 예전 플러그인 버전으로 만들어졌다고 알리면 사용자에게 `/update-library` 실행을 요청합니다. 이 스킬은 모델이 호출할 수 없습니다.
+- 훅이 사람이 쓴 문서 본문의 길이를 경고하면 `rule-creator`로 각 규칙의 범위를 지키면서 내용을 묶고 줄입니다.
+- 매 턴 종료 훅이 도서관이 예전 플러그인 버전으로 만들어졌다고 알리면 사용자에게 `/update-library` 실행을 요청합니다. 이 스킬은 모델이 호출할 수 없습니다.
 
 ## 기여하기
 
